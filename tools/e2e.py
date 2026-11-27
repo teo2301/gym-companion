@@ -70,6 +70,27 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     page.wait_for_timeout(500)
     page.screenshot(path=SHOTS / f"{tag}-2-home.png")
 
+    # Settings pill: visible, on screen, not overlapping the greeting
+    sb, hb, vw = page.locator("#settingsBtn").bounding_box(), page.locator("#hello").bounding_box(), page.viewport_size["width"]
+    if not sb or sb["x"] < 0 or sb["x"] + sb["width"] > vw or sb["height"] < 40:
+        problems.append(f"settings button off-screen or too small: {sb}")
+    elif hb and hb["x"] + hb["width"] > sb["x"]:
+        problems.append("settings button overlaps the greeting")
+    # Edit routine from the routine list: add a preset by search, save, check it stuck
+    page.locator(".redit").first.scroll_into_view_if_needed()
+    rname = page.locator(".rrow .rcard b").first.inner_text()
+    page.locator(".redit").first.click()
+    page.wait_for_selector("#eSearch", state="visible", timeout=5000)
+    page.fill("#eSearch", "face pull")
+    page.locator("#ePick .it").first.click()
+    page.click("#eSave")
+    page.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=5000)
+    has_fp = page.evaluate("Store.plan().then(function (p) { var r = p.routines.filter(function (x) { return x.name === %r; })[0];"
+                           " return !!r && r.exercises.some(function (e) { return e.name === 'Face Pull'; }); })" % rname)
+    if not has_fp:
+        problems.append(f"editing routine {rname!r} did not save the added exercise")
+    page.wait_for_timeout(400)
+    page.screenshot(path=SHOTS / f"{tag}-2c-routines.png", full_page=False)
     tap(page, "#goSug")
     page.wait_for_selector("#work.on", timeout=10000)
     page.wait_for_timeout(500)

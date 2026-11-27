@@ -47,29 +47,23 @@ function persistStorage() {
     .catch(function () {});
 }
 
-/* ---------- iOS Safari: one-time Add to Home Screen tip */
+/* ---------- iOS Safari: one-time Add to Home Screen tip (an ordinary card on the home screen, in the
+ * page flow under the greeting, so it can never cover a button) */
 function homeScreenTip() {
   if (!PUBLIC || IN_SHELL || !IOS || STANDALONE || lsGet('gymA2hsTip')) return;
+  var anchor = document.getElementById('hellosub');
+  if (!anchor || !anchor.parentNode) return;
   var d = document.createElement('div');
-  d.setAttribute('style', 'position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:80;' +
-    'background:#20252e;color:#eef0f3;border:1px solid #2a303a;border-radius:18px;padding:14px 16px;' +
-    'font:15px/1.4 system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.5)');
+  d.id = 'a2hsTip';
+  d.setAttribute('style', 'background:#20252e;color:#eef0f3;border:1px solid #2a303a;border-radius:18px;padding:14px 16px;' +
+    'margin:-8px 0 18px;font:15px/1.4 system-ui,-apple-system,sans-serif');
   d.innerHTML = '<b style="font-size:16px">Install Gym Companion</b><br>' +
     '<span style="color:#8d94a0">Tap <b style="color:#eef0f3">Share</b> then <b style="color:#eef0f3">Add to Home Screen</b>. ' +
-    'It works offline and keeps your workouts safe (Safari tabs can clear data you haven’t opened for a week).</span>' +
+    'It works offline and keeps your workouts safe (Safari tabs can clear data you haven\u2019t opened for a week).</span>' +
     '<button style="display:block;margin:10px 0 0 auto;border:0;border-radius:12px;padding:8px 16px;background:#d7ff3e;' +
     'color:#0c0e12;font:600 15px system-ui,-apple-system,sans-serif">Got it</button>';
-  // Only on a quiet home screen: it steps aside for onboarding, sheets, workouts and the rest timer,
-  // and comes back on the home screen until "Got it" is tapped.
-  var on = function (id) { var e = document.getElementById(id); return !!(e && e.classList.contains('on')); };
-  var timer = setInterval(function () {
-    var quiet = on('home') && !on('sheet') && !on('rest') && !on('lvup');
-    if (quiet && !d.parentNode) document.body.appendChild(d);
-    else if (!quiet && d.parentNode) d.parentNode.removeChild(d);
-  }, 1000);
-  d.querySelector('button').onclick = function () {
-    lsSet('gymA2hsTip', '1'); clearInterval(timer); if (d.parentNode) d.parentNode.removeChild(d);
-  };
+  d.querySelector('button').onclick = function () { lsSet('gymA2hsTip', '1'); if (d.parentNode) d.parentNode.removeChild(d); };
+  anchor.parentNode.insertBefore(d, anchor.nextSibling);
 }
 
 function boot() { watchWorkout(); registerOffline(); persistStorage(); homeScreenTip(); }

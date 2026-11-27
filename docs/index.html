@@ -63,6 +63,21 @@ h1{font-size:30px;letter-spacing:-.02em;margin:8px 0 2px;font-weight:750}
 .rcard .ic{width:44px;height:44px;border-radius:14px;background:var(--card2);display:flex;align-items:center;justify-content:center;margin-right:14px;color:var(--volt);font-weight:800}
 .rcard .t{flex:1}.rcard b{display:block;font-size:17px}.rcard small{color:var(--dim);font-size:13px}
 .rcard .chev{color:var(--dim2)}
+.toprow{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.toprow h1{min-width:0;overflow-wrap:anywhere}
+.setbtn{flex:none;display:flex;align-items:center;gap:7px;height:44px;padding:0 16px 0 13px;margin-top:6px;border-radius:22px;
+  background:var(--card2);border:1px solid var(--line);color:var(--text);font-weight:700;font-size:15px}
+.setbtn svg{width:20px;height:20px;fill:none;stroke:var(--volt);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.setbtn:active{transform:scale(.96);background:var(--line)}
+.rrow{display:flex;align-items:stretch;gap:8px;margin-bottom:10px}
+.rrow .rcard{flex:1;margin-bottom:0;min-width:0}
+.rrow .rcard .t{min-width:0}.rrow .rcard b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.redit{flex:none;width:64px;border-radius:20px;background:var(--card);color:var(--volt);font-weight:700;font-size:13px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.redit .pen{font-size:18px;line-height:1}
+.redit:active{transform:scale(.95);background:var(--card2)}
+.hero .tagrow{display:flex;align-items:center;justify-content:space-between}
+.hero .hedit{position:relative;z-index:1;height:34px;padding:0 14px;border-radius:17px;background:rgba(255,255,255,.08);color:var(--text);font-weight:700;font-size:14px}
 @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 
 /* preview sheet */
@@ -281,7 +296,8 @@ textarea.txt{min-height:96px;resize:none}
 
 <!-- HOME -->
 <section class="screen on" id="home"><div class="wrap">
-  <h1 id="hello">Let's train</h1>
+  <div class="toprow"><h1 id="hello">Let's train</h1>
+    <button class="setbtn" id="settingsBtn" aria-label="Settings and backup"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button></div>
   <p class="sub" id="hellosub">Loading your routines…</p>
   <div class="lcard"><div class="lfig" id="lifterFig"></div>
     <div class="linfo"><div class="lv"><small>LV</small><b class="num" id="lvNum">–</b></div><div class="tier" id="lvTier">&nbsp;</div>
@@ -292,7 +308,7 @@ textarea.txt{min-height:96px;resize:none}
   <div class="bodycard" id="bodyCard"><div id="bodyMap"></div><div class="legend" id="bodyLegend"></div><div class="minfo" id="bodyInfo"></div>
     <div class="tl" id="tl"><button id="tlPlay">▶</button><input type="range" id="tlRange" min="0" max="1" value="1"><span id="tlLab" class="num">Replay your training</span></div></div>
   <div class="insights" id="insights"></div>
-  <div class="labelrow"><div class="label">All routines</div><div><button class="mini" id="newRoutine">+ New routine</button><button class="mini" id="settingsBtn" title="Settings & backup">⚙︎</button></div></div>
+  <div class="labelrow"><div class="label">All routines</div><button class="mini" id="newRoutine">+ New routine</button></div>
   <div id="routines"><div class="skel"></div><div class="skel"></div></div>
 </div></section>
 
@@ -459,19 +475,24 @@ function renderHome() {
   var sug = plan.routines.filter(function (r) { return r.name === plan.suggested; })[0] || plan.routines[0];
   $('hellosub').textContent = plan.routines.length + ' routines · built from your ' + (IS_PUBLIC ? 'lifts' : 'history');
   if (sug) {
-    $('heroBox').innerHTML = '<div class="hero"><span class="tag">Up next</span><h2>' + esc(sug.name) + '</h2>' +
+    $('heroBox').innerHTML = '<div class="hero"><div class="tagrow"><span class="tag">Up next</span><button class="hedit" id="editSug">✎ Edit</button></div><h2>' + esc(sug.name) + '</h2>' +
       '<p>' + sug.exercises.length + (sug.exercises.length === 1 ? ' exercise' : ' exercises') + (sug.last_date ? ' · last done ' + daysAgo(sug.last_date) : ' · not done yet') + (sug.last_volume ? ' · ' + sug.last_volume.toLocaleString() + ' kg moved' : '') + '</p>' +
       '<button class="go" id="goSug">Start ' + esc(sug.name) + '</button></div>';
     $('goSug').onclick = function () { buzz(15); start(sug.name); };
+    $('editSug').onclick = function () { buzz(); editor(sug); };
   }
   var box = $('routines'); box.innerHTML = '';
   plan.routines.forEach(function (r, i) {
+    var row = document.createElement('div'); row.className = 'rrow';
     var b = document.createElement('button'); b.className = 'rcard'; b.style.animationDelay = (i * 60) + 'ms';
     b.innerHTML = '<div class="ic">' + esc(r.name.split(' ').map(function (w) { return w[0]; }).join('').slice(0, 2)) + '</div>' +
-      '<div class="t"><b>' + esc(r.name) + '</b><small>' + r.exercises.length + ' exercises · ' + (r.last_date ? daysAgo(r.last_date) : 'new') + '</small></div>' +
+      '<div class="t"><b>' + esc(r.name) + '</b><small>' + r.exercises.length + (r.exercises.length === 1 ? ' exercise · ' : ' exercises · ') + (r.last_date ? daysAgo(r.last_date) : 'new') + '</small></div>' +
       '<svg class="i chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
     b.onclick = function () { buzz(); preview(r); };
-    box.appendChild(b);
+    var ed = document.createElement('button'); ed.className = 'redit'; ed.style.animationDelay = (i * 60) + 'ms';
+    ed.setAttribute('aria-label', 'Edit ' + r.name); ed.innerHTML = '<span class="pen">✎</span>Edit';
+    ed.onclick = function () { buzz(); editor(r); };
+    row.appendChild(b); row.appendChild(ed); box.appendChild(row);
   });
   renderBody();
 }
@@ -484,7 +505,7 @@ function preview(r) {
     r.exercises.map(function (e) {
       return '<div class="prow"><div>' + esc(e.name) + (e.warmup && e.warmup.length ? '<br><small style="color:var(--dim)">+ ' + e.warmup.length + ' warm-up sets</small>' : '') +
         '</div><span class="num">' + setsTxt(e.target) + '<br>' + esc(e.why) + '</span></div>';
-    }).join('') + '<button class="log" id="pStart" style="margin-top:18px">Start workout</button><button class="danger" id="pEdit" style="color:var(--dim)">Edit routine</button>');
+    }).join('') + '<button class="log" id="pStart" style="margin-top:18px">Start workout</button><button class="finish" id="pEdit" style="margin-top:10px">✎ Edit routine</button>');
   drawMap($('pMap'), exFills(r.exercises));
   $('pStart').onclick = function () { buzz(15); closeSheet(); start(r.name); };
   $('pEdit').onclick = function () { buzz(); editor(r); };
