@@ -14,6 +14,7 @@ import tempfile
 import http.server
 import json
 import sys
+import traceback
 import threading
 from pathlib import Path
 
@@ -332,6 +333,48 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
         problems.append("1M tiles 40 days later should read '▼ 100%%': %r" % tiles)
     page.screenshot(path=SHOTS / f"{tag}-10-prev-period.png")
     page.click('#pgRange [data-r="3m"]'); page.wait_for_timeout(300)
+
+    # ---- Exercise detail: own period filter (default All), strength-standard lines, projection text.
+    # Five rising Bench Press (Barbell) sessions over the last 5 weeks (throwaway browser data only).
+    page.evaluate("""Store.backupData().then(function (b) {
+      var now = Date.now(), add = [];
+      [35, 28, 21, 14, 7].forEach(function (d, i) {
+        var st = now - d * 864e5;
+        add.push({id: 'e2e-bench-' + i, start: st, end: st + 3600e3, title: 'E2E Push',
+          exercises: {'Bench Press (Barbell)': [{weight_kg: 70 + 2.5 * i, reps: 5}, {weight_kg: 70 + 2.5 * i, reps: 5}]}});
+      });
+      b.sessions = add; return Store.restore(b, 'merge');
+    })""")
+    page.evaluate("Progress.exercise('Bench Press (Barbell)')")
+    page.wait_for_selector("#exChart svg", timeout=8000); page.wait_for_timeout(400)
+    if page.locator('#exRange button.on').inner_text() != "All":
+        problems.append("exercise detail should open on All")
+    refs = page.locator("#exChart text.cref").all_text_contents()
+    if not refs or not any("Intermediate" in r or "Novice" in r or "Advanced" in r for r in refs):
+        problems.append(f"no strength-standard lines on the 1RM chart: {refs}")
+    std = page.inner_text("#exStd")
+    if "Strength standards for 81.5 kg bodyweight" not in std or "Elite" not in std:
+        problems.append(f"standards text wrong: {std!r}")
+    proj = page.inner_text("#exProj")
+    if not proj.startswith("At your recent rate") or " by " not in proj:
+        problems.append(f"no projection text: {proj!r}")
+    page.locator("#sheet").screenshot(path=SHOTS / f"{tag}-11-exercise-detail.png")
+    page.evaluate("document.getElementById('exProj').scrollIntoView({block:'end'})"); page.wait_for_timeout(200)
+    page.screenshot(path=SHOTS / f"{tag}-11b-exercise-notes.png")
+    n_all = page.locator("#exSess .pgrow").count()
+    page.click('#exRange [data-r="1m"]'); page.wait_for_timeout(300)
+    n_1m = page.locator("#exSess .pgrow").count()
+    if not (n_all in (5, 6) and n_1m == 4):
+        problems.append(f"exercise period filter: All {n_all} sessions, 1M {n_1m} (want 5-6 / 4)")
+    if "in this period" not in page.inner_text("#exNote"):
+        problems.append("exercise note should talk about the period")
+    page.click("#exTab"); page.wait_for_timeout(200)
+    if page.locator("#exChart table tr").count() != n_1m + 1:
+        problems.append("exercise chart Table view rows don't match the period")
+    page.click("#exTab"); page.click('#exMetric [data-m="volume"]'); page.wait_for_timeout(200)
+    if page.inner_text("#exStd") or page.inner_text("#exProj"):
+        problems.append("standards/projection should only show on Est. 1RM")
+    page.evaluate("closeSheet()"); page.wait_for_timeout(300)
     page.evaluate("GymBack()"); page.wait_for_timeout(300)
 
     print(f"{engine:9} {device:18} LV {lv} -> offline LV {lv_off}, workouts {len(sessions)}, "
@@ -350,7 +393,8 @@ def main() -> int:
             try:
                 problems = run(pw, engine, device, url)
             except Exception as e:  # a timeout means a step never happened
-                problems = [f"{type(e).__name__}: " + " | ".join(l.strip() for l in str(e).splitlines()[:12])]
+                where = next((f"line {fr.lineno}: " for fr in reversed(traceback.extract_tb(e.__traceback__)) if fr.filename == __file__), "")
+                problems = [where + f"{type(e).__name__}: " + " | ".join(l.strip() for l in str(e).splitlines()[:12])]
             for p in problems:
                 print(f"  {engine}: {p}")
             failed += problems

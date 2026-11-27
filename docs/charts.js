@@ -75,13 +75,16 @@ function pointerX(svg, ev, W) {
   return (cx - r.left) * (W / r.width);
 }
 
-/* ---------- line over time: opts {points:[{x:ms,y,label?,pr?}], yFmt, unit, height, zero} */
+/* ---------- line over time: opts {points:[{x:ms,y,label?,pr?}], yFmt, unit, height, zero,
+ *            refs:[{y, label}] (horizontal reference lines, e.g. strength standards, labelled directly)} */
 function line(box, opts) {
   var pts = (opts.points || []).filter(function (p) { return isFinite(p.y); });
   if (pts.length < 2) { empty(box, opts.emptyText || 'Not enough data yet — needs at least two sessions.'); return; }
   var f = frame(box, opts.height), svg = f.svg, W = f.W, H = f.H, L = 40, R = 12, T = 12, B = 24;
   var ys = pts.map(function (p) { return p.y; }), xs = pts.map(function (p) { return p.x; });
-  var ax = nice(opts.zero ? 0 : Math.min.apply(null, ys), Math.max.apply(null, ys), 4);
+  var refs = (opts.refs || []).filter(function (r) { return isFinite(r.y) && r.y > 0; });
+  var ry = ys.concat(refs.map(function (r) { return r.y; }));
+  var ax = nice(opts.zero ? 0 : Math.min.apply(null, ry), Math.max.apply(null, ry), 4);
   var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
   if (x1 === x0) x1 = x0 + 864e5;
   var X = function (v) { return L + (v - x0) / (x1 - x0) * (W - L - R); };
@@ -92,6 +95,14 @@ function line(box, opts) {
     txt(svg, L - 6, Y(t) + 4, yf(t), 'end');
   });
   xTicks(svg, x0, x1, X, H, B);
+  // reference lines: solid hairlines in the axis tone (recede behind the data), label above at the left;
+  // a label that would crowd the previous one is dropped (the card text lists every threshold anyway)
+  var lastLab = -99, refLabels = [];
+  refs.slice().sort(function (a, b) { return b.y - a.y; }).forEach(function (r) {
+    var y = Y(r.y);
+    el('line', {x1: L, x2: W - R, y1: y, y2: y, stroke: C.axis, 'stroke-width': 1, 'class': 'cref'}, svg);
+    if (r.label && y - lastLab >= 13) { refLabels.push([y, r.label]); lastLab = y; }
+  });
   var d = pts.map(function (p, i) { return (i ? 'L' : 'M') + X(p.x).toFixed(1) + ',' + Y(p.y).toFixed(1); }).join('');
   el('path', {d: d, fill: 'none', stroke: C.series, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round'}, svg);
   pts.forEach(function (p) {
@@ -99,6 +110,18 @@ function line(box, opts) {
   });
   var last = pts[pts.length - 1];
   el('circle', {cx: X(last.x), cy: Y(last.y), r: 4.5, fill: C.series, stroke: C.surface, 'stroke-width': 2}, svg);
+  // reference labels go on top of the series with a surface-coloured halo, so a line through them can't hide them
+  // place each one where it covers no data point: left/right end, above/below its line
+  refLabels.forEach(function (l) {
+    var w = l[1].length * 6.3 + 4, spots = [[L + 4, l[0] - 4, 'start'], [W - R - 4, l[0] - 4, 'end'], [L + 4, l[0] + 13, 'start'], [W - R - 4, l[0] + 13, 'end']];
+    var free = spots.filter(function (s) {
+      var x0 = s[2] === 'start' ? s[0] : s[0] - w, x1 = x0 + w, y1 = s[1] + 3, y0 = s[1] - 11;
+      return y1 <= H - B && !pts.some(function (p) { var px = X(p.x), py = Y(p.y); return px > x0 - 6 && px < x1 + 6 && py > y0 - 6 && py < y1 + 6; });
+    })[0] || spots[0];
+    var t = txt(svg, free[0], free[1], l[1], free[2], 'cax cref');
+    t.setAttribute('stroke', C.surface); t.setAttribute('stroke-width', 4); t.setAttribute('stroke-linejoin', 'round');
+    t.setAttribute('paint-order', 'stroke');
+  });
   // no in-plot value label: the card's note states the latest value, and labels over a busy line collide
   // crosshair + tooltip
   var cross = el('line', {y1: T, y2: H - B, stroke: C.axis, 'stroke-width': 1, visibility: 'hidden'}, svg);

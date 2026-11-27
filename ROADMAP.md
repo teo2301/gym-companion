@@ -7,7 +7,7 @@ Goal: the best free progress tracking of any gym app. Each item ships on its own
       period of the same length (e.g. "Volume 128k ▲ 12%"), with ▲/▼ text, not colour alone.
 - [x] **Add cardio to a past workout.** In the workout editor, cardio machines get intervals
       (Jog/Run/Sprint, minutes, km, km/h, kcal) instead of kg x reps; missing speed/distance/kcal are
-      worked out on save. (v1.9, at Matteo's request)
+      worked out on save. (v1.9, on request)
 - [ ] **Exercise detail upgrades.** (a) Its own period filter (default All). (b) Strength-standard
       reference lines on the estimated-1RM chart (Novice / Intermediate / Advanced / Elite thresholds
       for your bodyweight, from coaching standards, where the lift has one), labelled directly.

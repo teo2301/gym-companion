@@ -19,8 +19,8 @@ function big(n) { return n >= 1e6 ? (Math.round(n / 1e5) / 10) + 'M' : n >= 1e4 
 function dstr(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 function monday(ds) { var d = new Date(ds + 'T12:00:00'); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return dstr(d); }
 function niceDate(ds) { return new Date(ds + 'T12:00:00').toLocaleDateString('en-GB', {day: 'numeric', month: 'short', year: 'numeric'}); }
-function cutoff() {
-  var r = RANGES.filter(function (x) { return x[0] === range; })[0];
+function cutoff(key) {
+  var r = RANGES.filter(function (x) { return x[0] === (key || range); })[0];
   if (!r || !r[2]) return '0000-00-00';
   var d = new Date(); d.setDate(d.getDate() - r[2]); return dstr(d);
 }
@@ -355,10 +355,55 @@ function bucketize(W, cut) {
 
 /* ---------- one exercise */
 var exMetric = 'e1rm';
+function hasK(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
+/* Strength-standard thresholds for this lift at this bodyweight, in the units the lift is logged in
+ * (bodyweight-loaded lifts log the ADDED weight, so the bodyweight is taken off). Same tables and order
+ * as rateLift/gym_progress (official > approximate). null when the lift has no standard. */
+function standardsFor(name, bw) {
+  var G = window.GymCore; if (!G || !(bw > 0)) return null;
+  var loaded = hasK(G.BODYWEIGHT_LOADED, name), off = hasK(G.STRENGTH_STANDARDS, name);
+  var th = loaded ? G.BODYWEIGHT_LOADED[name] : off ? G.STRENGTH_STANDARDS[name] : hasK(G.APPROX, name) ? G.APPROX[name] : null;
+  if (!th) return null;
+  return {approx: !loaded && !off, loaded: loaded, bw: bw, levels: th.map(function (r, i) {
+    return {level: G.LEVELS[i], kg: Math.round(10 * (r * bw - (loaded ? bw : 0))) / 10};
+  }).filter(function (l, i) { return i > 0 && l.kg > 0; })};          // Novice .. Elite (Beginner is the floor)
+}
+/* The levels worth drawing: one below the data up to the first one above it (keeps the line readable). */
+function refBand(levels, lo, hi) {
+  var below = levels.filter(function (l) { return l.kg <= lo; }).slice(-1);
+  var inside = levels.filter(function (l) { return l.kg > lo && l.kg <= hi; });
+  var above = levels.filter(function (l) { return l.kg > hi; }).slice(0, 1);
+  return below.concat(inside, above);
+}
+/* Least-squares fit of e1RM over the last 8 sessions (needs >= 4, a rising trend and a recent last
+ * session). Returns {perMonth, target, level, date} or null. `pts` = [{date, e1rm}] oldest first. */
+function projection(pts, levels, now) {
+  var P = pts.filter(function (p) { return p.e1rm > 0; }).slice(-8);
+  if (P.length < 4) return null;
+  now = now || Date.now();
+  var t0 = new Date(P[0].date + 'T12:00:00').getTime(), n = P.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  var X = P.map(function (p) { return (new Date(p.date + 'T12:00:00').getTime() - t0) / 864e5; });
+  P.forEach(function (p, i) { sx += X[i]; sy += p.e1rm; sxx += X[i] * X[i]; sxy += X[i] * p.e1rm; });
+  var den = n * sxx - sx * sx; if (!den) return null;
+  var b = (n * sxy - sx * sy) / den, a = (sy - b * sx) / n;     // kg per day, kg at the first session
+  var today = (now - t0) / 864e5;
+  if (!(b > 0) || today - X[n - 1] > 120) return null;          // falling/flat, or no recent sessions
+  var fitNow = a + b * today, best = Math.max.apply(null, P.map(function (p) { return p.e1rm; }));
+  var next = (levels || []).filter(function (l) { return l.kg > Math.max(fitNow, best); })[0], days, target, level = null;
+  if (next && (next.kg - fitNow) / b <= 365) { target = next.kg; level = next.level; days = (next.kg - fitNow) / b; }
+  else { days = 91; target = Math.round(2 * (fitNow + b * days)) / 2; }
+  if (target <= best) return null;                              // nothing new to promise
+  return {perMonth: Math.round(10 * b * 30.44) / 10, target: target, level: level, date: new Date(now + Math.ceil(days) * 864e5)};
+}
+var exRange = 'all';
 function exerciseSheet(name) {
   if (!name) return;
+  exRange = 'all';                                      // each exercise opens on All (its own filter)
   var rec = D && D.stats.exercises.filter(function (x) { return x.name === name; })[0];
-  Store.history(name).then(function (h) {
+  // the sheet can open from Home too (before Progress loaded): then fetch the level data for the bodyweight
+  var progP = D && D.prog ? Promise.resolve(D.prog) : Store.progress().catch(function () { return null; });
+  Promise.all([Store.history(name), progP]).then(function (hv) {
+    var h = hv[0], prog = hv[1];
     var S = (h.sessions || []).map(function (s) {
       var heavy = 0, reps = 0; (s.sets || []).forEach(function (x) { heavy = Math.max(heavy, x.w); reps += x.r; });
       return {date: s.date, x: new Date(s.date + 'T12:00:00').getTime(), e1rm: s.e1rm, heavy: heavy, volume: s.volume, reps: reps, pr: s.pr, sets: s.sets || []};
@@ -374,23 +419,51 @@ function exerciseSheet(name) {
         tile('Best session', big(rec.best_volume) + '<span style="font-size:13px;color:var(--dim)"> kg</span>', 'volume') +
         tile('Total reps', big(rec.total_reps), rec.sessions + (rec.sessions === 1 ? ' session' : ' sessions')) + tile('Total volume', big(rec.total_volume), 'kg lifted') +
         tile('PRs', S.filter(function (s) { return s.pr; }).length, '1RM records') + '</div>' : '') +
-      '<div class="pgcard" style="background:var(--card)"><div class="pgseg" id="exMetric">' +
+      '<div class="pgrange" id="exRange">' + RANGES.map(function (r) { return '<button data-r="' + r[0] + '" class="' + (r[0] === exRange ? 'on' : '') + '">' + r[1] + '</button>'; }).join('') + '</div>' +
+      '<div class="pgcard" style="background:var(--card)"><div class="pgch"><h3>Over time</h3><button class="pgtab" id="exTab">Table</button></div><div class="pgseg" id="exMetric">' +
       [['e1rm', 'Est. 1RM'], ['heavy', 'Heaviest'], ['volume', 'Volume'], ['reps', 'Reps']].map(function (m) {
         return '<button data-m="' + m[0] + '" class="' + (m[0] === exMetric ? 'on' : '') + '">' + m[1] + '</button>'; }).join('') +
-      '</div><div id="exChart"></div><div class="pgnote" id="exNote"></div></div>' +
+      '</div><div id="exChart"></div><div class="pgnote" id="exNote"></div><div class="pgnote" id="exStd"></div><div class="pgnote" id="exProj"></div></div>' +
       '<div class="pgcard"><div class="pgch"><h3>Rep maxes</h3></div><p class="pgsub">Heaviest weight you’ve lifted for at least that many reps.</p><div id="exReps"></div></div>' +
       '<div class="pgcard"><div class="pgch"><h3>Recent sessions</h3></div><div id="exSess"></div></div>');
+    var bw = prog && prog.bodyweight, std = standardsFor(name, bw);
+    var proj = projection(S.map(function (s) { return {date: s.date, e1rm: s.e1rm}; }), std && std.levels);
+    var exTable = false;
     function draw() {
+      var cut = cutoff(exRange), V = S.filter(function (s) { return s.date >= cut; });
       var lab = {e1rm: 'Estimated 1-rep max', heavy: 'Heaviest set', volume: 'Session volume', reps: 'Total reps'}[exMetric];
-      var pts = S.map(function (s) { return {x: s.x, y: s[exMetric], pr: exMetric === 'e1rm' && s.pr, label: niceDate(s.date)}; });
-      if (exMetric === 'volume' || exMetric === 'reps')
-        Charts.bars(q('exChart'), {items: pts.map(function (p, i) { return {x: p.x, y: p.y, tip: p.label, now: i === pts.length - 1}; }), unit: exMetric === 'volume' ? ' kg' : ' reps'});
-      else Charts.line(q('exChart'), {points: pts, unit: ' kg', yFmt: function (v) { return kg(v); }});
-      var first = S.length ? S[0][exMetric] : 0, last = S.length ? S[S.length - 1][exMetric] : 0;
-      q('exNote').innerHTML = lab + (S.length >= 2 && first ? ': <b>' + (last >= first ? '+' : '') + Math.round(100 * (last - first) / first) + '%</b> since your first session' : '') +
+      var unit = exMetric === 'reps' ? ' reps' : ' kg';
+      var pts = V.map(function (s) { return {x: s.x, y: s[exMetric], pr: exMetric === 'e1rm' && s.pr, label: niceDate(s.date)}; });
+      var refs = [];
+      if (exMetric === 'e1rm' && std && pts.length) {
+        var ys = pts.map(function (p) { return p.y; });
+        refs = refBand(std.levels, Math.min.apply(null, ys), Math.max.apply(null, ys)).map(function (l) { return {y: l.kg, label: l.level + ' ' + kg(l.kg)}; });
+      }
+      var empty = exRange === 'all' ? 'No sessions yet.' : 'No sessions in this period.';
+      if (exTable) Charts.table(q('exChart'), ['Date', lab], pts.slice().reverse().map(function (p) { return [p.label + (p.pr ? ' 🏆' : ''), kg(p.y) + unit]; }));
+      else if (exMetric === 'volume' || exMetric === 'reps')
+        Charts.bars(q('exChart'), {items: pts.map(function (p, i) { return {x: p.x, y: p.y, tip: p.label, now: i === pts.length - 1}; }), unit: unit, emptyText: empty});
+      else Charts.line(q('exChart'), {points: pts, unit: ' kg', yFmt: function (v) { return kg(v); }, refs: refs,
+        emptyText: pts.length ? 'Needs at least two sessions in this period.' : empty});
+      var first = V.length ? V[0][exMetric] : 0, last = V.length ? V[V.length - 1][exMetric] : 0;
+      q('exNote').innerHTML = lab + (V.length >= 2 && first ? ': <b>' + (last >= first ? '+' : '') + Math.round(100 * (last - first) / first) + '%</b> ' +
+        (exRange === 'all' ? 'since your first session' : 'in this period') : '') +
         (exMetric === 'e1rm' ? ' · <span style="color:#ffb020">●</span> = PR' : '') + '.';
+      q('exStd').innerHTML = exMetric === 'e1rm' && std ? 'Strength standards' + (std.approx ? ' (approximate)' : '') + ' for ' + kg(std.bw) + ' kg bodyweight' +
+        (std.loaded ? ', added weight' : '') + ': ' + std.levels.map(function (l) { return e(l.level) + ' <b>' + kg(l.kg) + '</b>'; }).join(' · ') + ' kg.' : '';
+      q('exProj').innerHTML = exMetric === 'e1rm' && proj ? 'At your recent rate (<b>+' + kg(proj.perMonth) + ' kg</b> a month over your last sessions) you reach <b>' +
+        (proj.level ? e(proj.level) + ', ' : '') + kg(proj.target) + ' kg</b> by <b>' + e(niceDate(dstr(proj.date))) + '</b>.' : '';
+      q('exSess').innerHTML = V.slice(-10).reverse().map(function (s) {
+        return '<div class="pgrow" style="cursor:default"><div><b>' + e(niceDate(s.date)) + (s.pr ? ' 🏆' : '') + '</b><small>' +
+          e(s.sets.map(function (x) { return (x.w ? kg(x.w) + '×' : '') + x.r; }).join(' · ')) + '</small></div><span class="v">' + kg(s.e1rm) + '<small>kg 1RM</small></span></div>';
+      }).join('') || '<p class="cempty">' + empty + '</p>';
     }
     draw();
+    q('exRange').onclick = function (ev) {
+      var r = ev.target.getAttribute && ev.target.getAttribute('data-r'); if (!r) return;
+      exRange = r; buzz(); Array.prototype.forEach.call(this.children, function (b) { b.classList.toggle('on', b.getAttribute('data-r') === r); }); draw();
+    };
+    q('exTab').onclick = function () { exTable = !exTable; this.textContent = exTable ? 'Chart' : 'Table'; this.classList.toggle('on', exTable); buzz(); draw(); };
     q('exMetric').onclick = function (ev) {
       var m = ev.target.getAttribute && ev.target.getAttribute('data-m'); if (!m) return;
       exMetric = m; buzz(); Array.prototype.forEach.call(this.children, function (b) { b.classList.toggle('on', b.getAttribute('data-m') === m); }); draw();
@@ -399,10 +472,6 @@ function exerciseSheet(name) {
     Charts.table(q('exReps'), ['Reps', 'Weight', 'Est. 1RM', 'When'], R.map(function (n) {
       var b = repBest[n]; return [n + (n === 1 ? ' rep' : ' reps'), kg(b.w) + ' kg', kg(n === 1 ? b.w : b.w * (1 + n / 30)) + ' kg', niceDate(b.date)];
     }));
-    q('exSess').innerHTML = S.slice(-10).reverse().map(function (s) {
-      return '<div class="pgrow" style="cursor:default"><div><b>' + e(niceDate(s.date)) + (s.pr ? ' 🏆' : '') + '</b><small>' +
-        e(s.sets.map(function (x) { return (x.w ? kg(x.w) + '×' : '') + x.r; }).join(' · ')) + '</small></div><span class="v">' + kg(s.e1rm) + '<small>kg 1RM</small></span></div>';
-    }).join('') || '<p class="cempty">No sessions yet.</p>';
   }).catch(function () { toast('Could not load ' + name); });
 }
 
@@ -417,6 +486,6 @@ window.GymBack = function () {
 };
 
 styles();          // the home-screen button uses these styles too
-window.Progress = {open: open, exercise: exerciseSheet,
+window.Progress = {open: open, exercise: exerciseSheet, _projection: projection, _standards: standardsFor,
   refreshEvolution: function () { if (D) drawEvolution(); }};
 })();
