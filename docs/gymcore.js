@@ -305,11 +305,24 @@ function customMap(custom) {
   } else if (custom && typeof custom === 'object') out = custom;
   return out;
 }
+// Preset exercise library (exercises.json), loaded by the store. Checked after EXACT and before the
+// keyword RULES, same order as gym_muscles.muscles_for.
+var PRESETS = {}, PRESET_NAMES = [];
+function setPresets(list) {
+  PRESETS = {}; PRESET_NAMES = [];
+  asArray(list).forEach(function (x) {
+    if (!x || !x.name || !asArray(x.primary).length) return;
+    PRESETS[x.name] = {primary: asArray(x.primary).slice(), secondary: asArray(x.secondary).slice(), equipment: x.equipment || ''};
+    PRESET_NAMES.push(x.name);
+  });
+  return PRESET_NAMES.length;
+}
 function musclesFor(name, custom) {
   var cm = customMap(custom)[name];
   if (cm && ((asArray(cm.primary).length) || (asArray(cm.secondary).length)))
     return {primary: asArray(cm.primary).slice(), secondary: asArray(cm.secondary).slice()};
   if (has(EXACT, name)) return {primary: EXACT[name][0].slice(), secondary: EXACT[name][1].slice()};
+  if (has(PRESETS, name)) return {primary: PRESETS[name].primary.slice(), secondary: PRESETS[name].secondary.slice()};
   var n = String(name || '').toLowerCase(), i;
   for (i = 0; i < RULES.length; i++) if (RULES[i][0].test(n)) return {primary: RULES[i][1].slice(), secondary: RULES[i][2].slice()};
   return {primary: [], secondary: []};
@@ -716,12 +729,16 @@ function buildPlan(opts) {
   });
   var suggested = recent.length ? recent.slice().sort(function (a, b) { return (a.last_date || '').localeCompare(b.last_date || ''); })[0].name :
     (routines.length ? routines[0].name : null);
-  var catalogue = Object.keys(lastBy).concat(custom, Object.keys(cfg.templates), Object.keys(notes));
+  var inRoutines = [];   // exercises listed in your routines (not the routine names themselves)
+  Object.keys(cfg.templates).forEach(function (t) { inRoutines = inRoutines.concat(asArray(cfg.templates[t])); });
+  var catalogue = Object.keys(lastBy).concat(custom, inRoutines, Object.keys(notes), PRESET_NAMES);
   var seen = {};
   catalogue = catalogue.filter(function (n) { if (!n || seen[n]) return false; seen[n] = 1; return true; });
   catalogue.sort(function (a, b) {
+    // used most first, then everything else you've touched, then the preset library A-Z (as gym_api)
     var d = (weightsBy[b] ? weightsBy[b].length : 0) - (weightsBy[a] ? weightsBy[a].length : 0);
-    return d || a.localeCompare(b);
+    var pa = has(lastBy, a) ? 0 : 1, pb = has(lastBy, b) ? 0 : 1;
+    return d || (pa - pb) || (a < b ? -1 : a > b ? 1 : 0);
   });
   var lifter = null;
   try { lifter = progress(opts).overall; } catch (err) { /* progress is optional */ }
@@ -954,7 +971,8 @@ global.GymCore = {
   MUSCLES: MUSCLES, LEVELS: LEVELS, MUSCLE_LIFTS: MUSCLE_LIFTS, APPROX: APPROX,
   STRENGTH_STANDARDS: STRENGTH_STANDARDS, BODYWEIGHT_LOADED: BODYWEIGHT_LOADED, FIELDS: FIELDS,
   e1rm: e1rm, step: step, goalReps: goalReps, target: target, warmup: warmup,
-  musclesFor: musclesFor, alternatives: alternatives, classify: classify,
+  musclesFor: musclesFor, alternatives: alternatives, classify: classify, setPresets: setPresets,
+  presets: function () { return PRESET_NAMES.slice(); },
   rateLift: rateLift, score: score, muscleLevels: muscleLevels, overall: overall, progress: progress,
   bodyWeek: bodyWeek, weekStats: weekStats, history: exerciseHistory, buildPlan: buildPlan,
   summary: summary, newExercise: newExercise, applyOp: applyOp,

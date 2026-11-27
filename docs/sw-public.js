@@ -3,9 +3,9 @@
  * Strategy: serve from cache, refresh in the background; a new CACHE name drops old copies.
  * Bump CACHE whenever any shipped file changes (tools/build.sh does this from a content hash).
  */
-var CACHE = 'gym-public-945b16106889';
+var CACHE = 'gym-public-3dd6c24be7f2';
 var SHELL = ['./', 'index.html', 'config.js', 'body.js', 'character.js', 'gymcore.js', 'gymstore.js',
-  'backup.js', 'pwa.js', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+  'backup.js', 'pwa.js', 'exercises.json', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));

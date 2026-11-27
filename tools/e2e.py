@@ -55,6 +55,7 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     page.goto(url)
 
     page.wait_for_selector("#onSave", state="visible", timeout=15000)
+    page.click('#toneRow [data-tone="brown"]')                      # pick a look during onboarding
     page.screenshot(path=SHOTS / f"{tag}-1-onboarding.png")
     page.fill("#onBw", "80")
     page.fill('.cxw[data-ex="Bench Press (Barbell)"]', "80")
@@ -84,9 +85,29 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     tap(page, "#homeBtn")
     page.wait_for_timeout(1500)
 
+    # Preset library: the add-exercise picker must offer the common lifts with no custom setup
+    n_ex = page.evaluate("Store.plan().then(function (p) { return p.exercises.length; })")
+    if n_ex < 150:
+        problems.append(f"only {n_ex} exercises offered; preset library missing")
+    hip = page.evaluate("Store.plan().then(function (p) { var e = p.exercises.filter(function (x) { return x.name === 'Hip Thrust (Barbell)'; })[0]; return e && e.muscles.primary; })")
+    if hip != ["glutes"]:
+        problems.append(f"preset muscles wrong for Hip Thrust: {hip}")
+    # Skin tone: change it in Settings, it must redraw and survive a reload
+    page.click("#settingsBtn")
+    page.wait_for_selector('#toneRow [data-tone="deep"]', state="visible", timeout=5000)
+    page.click('#toneRow [data-tone="deep"]')
+    page.wait_for_timeout(300)
+    page.screenshot(path=SHOTS / f"{tag}-2b-settings-tone.png")
+    page.evaluate("closeSheet()")
+
     page.reload()
     page.wait_for_function("window.Store && document.getElementById('lvNum').textContent.trim() !== '–'", timeout=10000)
+    page.wait_for_timeout(500)
+    if "#5f3b23" not in page.inner_html("#lifterFig"):
+        problems.append(f"skin tone not kept after reload (tone={page.evaluate('Lifter.tone()')})")
     data = page.evaluate("Store.backupData()")
+    if (data.get("settings") or {}).get("skinTone") != "deep":
+        problems.append("skin tone missing from backup")
     sessions = data.get("sessions") or []
     if len(sessions) != 1:
         problems.append(f"expected 1 saved workout after reload, found {len(sessions)}")
@@ -107,11 +128,13 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     page.reload()
     page.wait_for_function("window.Store && document.getElementById('lvNum').textContent.trim() !== '–'", timeout=10000)
     lv_off = page.inner_text("#lvNum")
+    if "#5f3b23" not in page.inner_html("#lifterFig"):
+        problems.append("skin tone lost offline")
     page.screenshot(path=SHOTS / f"{tag}-5-offline.png")
     ctx.set_offline(False)
 
     print(f"{engine:9} {device:18} LV {lv} -> offline LV {lv_off}, workouts {len(sessions)}, "
-          f"backup file {dl.value.suggested_filename}, problems {len(problems)}")
+          f"{n_ex} exercises, tone {page.evaluate('Lifter.tone()')}, problems {len(problems)}")
     browser.close()
     return problems
 

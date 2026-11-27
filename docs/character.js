@@ -4,7 +4,24 @@
    wristbands (Novice), headband (Intermediate), lifting belt (Advanced), gold belt + aura (Elite). */
 (function () {
   'use strict';
-  var SKIN = '#e9b48a', SKIN_D = '#c98d62', SKIN_L = '#f6cfa9', HAIR = '#2a2320', VOLT = '#d7ff3e', INK = '#0c0e12';
+  var HAIR = '#2a2320', VOLT = '#d7ff3e', INK = '#0c0e12';
+  // Skin tones: [base, shade (muscle lines), highlight (gradient top)]. 'beige' is the original look.
+  var TONES = {
+    porcelain: ['#f3d2bb', '#d6a689', '#fce6d7'],
+    beige:     ['#e9b48a', '#c98d62', '#f6cfa9'],
+    tan:       ['#d39a6a', '#ad7445', '#e7b88c'],
+    olive:     ['#b47e52', '#8d5b33', '#cb9a6e'],
+    brown:     ['#8d5a37', '#6b3f22', '#a8744d'],
+    deep:      ['#5f3b23', '#432817', '#7c5135']
+  };
+  var TONE_ORDER = ['porcelain', 'beige', 'tan', 'olive', 'brown', 'deep'], tone = 'beige';
+  var SKIN = TONES.beige[0], SKIN_D = TONES.beige[1], SKIN_L = TONES.beige[2];
+  /** Choose the character's skin tone; unknown ids fall back to the default. Returns the id used. */
+  function setTone(id) {
+    tone = TONES[id] ? id : 'beige';
+    SKIN = TONES[tone][0]; SKIN_D = TONES[tone][1]; SKIN_L = TONES[tone][2];
+    return tone;
+  }
 
   function f(n) { return n.toFixed(1); }
 
@@ -92,5 +109,6 @@
     o += '</g></svg>';
     return o;
   }
-  window.Lifter = {svg: svg};
+  window.Lifter = {svg: svg, setTone: setTone, tone: function () { return tone; },
+    tones: function () { return TONE_ORDER.map(function (k) { return {id: k, color: TONES[k][0]}; }); }};
 })();

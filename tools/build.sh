@@ -17,7 +17,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC=${GYM_SRC:-$HOME/projects/services/serverchat/static/gym}
 DOCS="$ROOT/docs"
 ASSETS="$ROOT/android/app/src/main/assets/gym"
-APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js manifest.json
+APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js exercises.json manifest.json
            icon-180.png icon-192.png icon-512.png)
 
 PUBLIC_CONFIG='// Public build: offline, all data stays on this device.

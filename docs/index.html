@@ -272,6 +272,9 @@ textarea.txt{min-height:96px;resize:none}
 .lvup h2{font-size:30px;margin:4px 0}
 .lvup p{color:var(--dim);margin:0}
 .noanim *{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important}
+.tones{display:flex;gap:10px;margin:6px 0 14px;flex-wrap:wrap}
+.tones button{width:40px;height:40px;border-radius:50%;border:2px solid var(--line);box-shadow:inset 0 -6px 10px rgba(0,0,0,.18);transition:transform .15s var(--spring)}
+.tones button.on{border-color:var(--volt);transform:scale(1.12);box-shadow:0 0 0 3px var(--voltglow),inset 0 -6px 10px rgba(0,0,0,.18)}
 </style></head>
 <body>
 <div class="glow"></div>
@@ -419,7 +422,31 @@ function apply(st) {
 function now() { return Date.now() + clockSkew; }
 
 /* ---------- home */
+/* ---------- character skin tone (saved via Store, so it is in backups) */
+function toneRow() {
+  return '<div class="label" style="margin:2px 0 0">Your character</div><div class="tones" id="toneRow">' +
+    Lifter.tones().map(function (t) {
+      return '<button data-tone="' + t.id + '" aria-label="Skin tone ' + t.id + '" style="background:' + t.color + '"' +
+        (t.id === Lifter.tone() ? ' class="on"' : '') + '></button>';
+    }).join('') + '</div>';
+}
+function wireToneRow() {
+  var row = $('toneRow'); if (!row) return;
+  row.onclick = function (e) {
+    var id = e.target && e.target.getAttribute('data-tone'); if (!id) return;
+    buzz(); Lifter.setTone(id); Store.set('skinTone', id);
+    Array.prototype.forEach.call(row.querySelectorAll('button'), function (b) { b.classList.toggle('on', b === e.target); });
+    if (prog) renderLifter();
+  };
+}
+function applyTone() {
+  return Store.get('skinTone').then(function (t) {
+    var before = Lifter.tone();
+    if (Lifter.setTone(t) !== before && prog) renderLifter();
+  }).catch(function () {});
+}
 function loadPlan() {
+  applyTone();
   Store.plan().then(function (p) {
     plan = p; MN = p.muscle_names || MN; renderHome(); loadProgress();
     if (live && !live.finished) { todaySig = ''; render(); }
@@ -1115,9 +1142,11 @@ function onboardSheet() {
   openSheet('<h2 style="margin:0 0 4px;font-size:24px">Set your starting level</h2>' +
     '<p class="sub" style="margin-bottom:10px">Enter a recent working set (kg × reps) for each lift you know. Leave the rest blank. ' +
     'This sets your character level — no fake workout history is created.</p>' +
+    toneRow() +
     '<input class="txt num" id="onBw" type="number" min="30" max="250" step="0.1" placeholder="Bodyweight kg" value="75">' +
     rows + '<button class="log" id="onSave">Create my routines</button>' +
     '<button class="danger" id="onSkip">Skip for now</button>');
+  wireToneRow();
   $('onSave').onclick = function () {
     var maxes = {};
     Array.prototype.forEach.call($('sheetBody').querySelectorAll('.cxw'), function (inp) {
@@ -1134,11 +1163,13 @@ function onboardSheet() {
 function settingsSheet() {
   openSheet('<h2 style="margin:0 0 4px;font-size:24px">Settings & backup</h2>' +
     '<p class="sub" style="margin-bottom:12px">' + (IS_PUBLIC ? 'All data stays on this phone. Back up before changing device.' : 'Your data lives on your private server. Download a copy anytime.') + '</p>' +
+    toneRow() +
     '<button class="log" id="setBackup" style="margin-top:4px">↓ Download backup (JSON)</button>' +
     '<button class="finish" id="setCsv">↓ Download workouts (CSV)</button>' +
     (IS_PUBLIC ? '<button class="finish" id="setRestore">↑ Restore a backup</button>' +
       '<button class="danger" id="setOnboard">Set starting level again</button>' : '') +
     '<p class="sub" style="margin:14px 0 0;font-size:12.5px">Backups contain health data — store the file securely.</p>');
+  wireToneRow();
   $('setBackup').onclick = function () { Backup.exportJson(); };
   $('setCsv').onclick = function () { Backup.exportCsv(); };
   if (IS_PUBLIC) {

@@ -6,7 +6,7 @@ android/build/
 android/app/build/
 release/
 tools/shots/
-tools/apk-build.log
+tools/*.log
 __pycache__/
 # signing material lives in ~/keys, never here
 *.jks

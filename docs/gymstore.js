@@ -6,11 +6,12 @@
 'use strict';
 
 var DB_NAME = 'gym-companion';
-var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot'];
+var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot', 'skinTone'];
 var LS_KEYS = {
   bodyweight: 'gymBodyweight', lastLv: 'gymLv', lastBackupAt: 'gymLastBackupAt',
   onboarded: 'gymOnboarded', seedBests: 'gymSeedBests', routines: 'gymRoutines',
-  notes: 'gymNotes', custom: 'gymCustom', snapshot: 'gymSnapshot', lastBackupNudge: 'gymBackupNudge'
+  notes: 'gymNotes', custom: 'gymCustom', snapshot: 'gymSnapshot', lastBackupNudge: 'gymBackupNudge',
+  skinTone: 'gymSkinTone'
 };
 var UPPER = ['chest', 'front_delts', 'side_delts', 'rear_delts', 'triceps', 'biceps', 'lats', 'upper_back', 'traps', 'forearms', 'abs', 'obliques'];
 var LOWER = ['quads', 'hamstrings', 'glutes', 'calves', 'adductors', 'lower_back'];
@@ -254,6 +255,14 @@ function stateOut(liveState) {
 
 /* ---------- public (offline, on-phone) store ---------- */
 
+// Preset exercise library for offline mode (the private server merges it in server-side). A missing
+// file only means no presets; the app still works.
+function loadPresets() {
+  if (typeof fetch !== 'function') return Promise.resolve(0);
+  return fetch('exercises.json').then(function (r) { return r.ok ? r.json() : {exercises: []}; })
+    .then(function (d) { return core().setPresets(d && d.exercises); })
+    .catch(function () { return 0; });
+}
 function refreshCache(c) {
   return Promise.all([kvGet('bodyweight'), kvGet('seedBests'), kvGet('routines'),
     kvGet('notes'), kvGet('custom'), kvGet('lastLv'), sessionsAll()]).then(function (v) {
@@ -466,6 +475,7 @@ function makePublic(c) {
         next.custom = asArray(data.customExercises || data.custom);
         next.bodyweight = pick('bodyweight', 75);
         next.lastLv = pick('lastLv', 0);
+        next.skinTone = pick('skinTone', null);
         counts.sessionsAdded = next.sessions.length;
         // Clear strictly before writing, so the restored sessions can never be wiped by the clear.
         tasks.push(sessionsClear().then(function () {
@@ -499,6 +509,7 @@ function makePublic(c) {
         });
         next.bodyweight = v[5] == null ? pick('bodyweight', 75) : v[5];
         next.lastLv = v[6] == null ? pick('lastLv', 0) : v[6];
+        var tn = pick('skinTone', null); if (tn) next.skinTone = tn;   // merge: keep yours unless the backup has one
         added.forEach(function (s) { tasks.push(sessionPut(s)); });
       }
       counts.seedBests = Object.keys(next.seedBests).length;
@@ -571,7 +582,7 @@ global.GymStore = {
     var c = {sessions: [], bodyweight: 75, seedBests: {}, routines: {templates: {}, hidden: []},
       notes: {}, custom: [], lastLv: 0};
     var store = makePublic(c);
-    return refreshCache(c).then(function () { return store; });
+    return Promise.all([refreshCache(c), loadPresets()]).then(function () { return store; });
   }
 };
 })(window);
