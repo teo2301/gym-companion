@@ -8,7 +8,7 @@
 var BASE = String(window.GYM_SOCIAL_API || '').replace(/\/+$/, '');
 var ORIGIN = BASE.replace(/^(https?:\/\/[^\/]+).*$/, '$1');
 var INVITE_URL = 'https://teo2301.github.io/gym-companion/#friend=';
-var token = null, me = null, pendingInvite = null, feedCache = [], shareOn = true, lastSync = 0, lastSig = '';
+var token = null, me = null, pendingInvite = null, feedCache = [], shareOn = true, lastSync = 0, lastSig = '', owner = null, lastOwnSig = '', lastOwnAt = 0;
 
 function $(id) { return document.getElementById(id); }
 function e(t) { return window.esc ? window.esc(t) : String(t).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
@@ -132,6 +132,7 @@ function styles() {
     '.sfr{display:flex;align-items:center;gap:10px;background:var(--card);border-radius:14px;padding:8px 10px;margin-bottom:6px}.sfr b{flex:1}.sfr button{color:var(--dim);font-size:13.5px;padding:8px}',
     '.spick{display:flex;align-items:center;gap:12px;margin:4px 0 12px}.spick label{height:44px;padding:0 16px;border-radius:14px;background:var(--card2);display:flex;align-items:center;font-weight:700;color:var(--volt)}',
     '.spick input{display:none}.sprev{width:84px;height:84px;border-radius:14px;object-fit:cover}',
+    '.sdash{flex:1;min-width:96px;height:44px;border-radius:14px;background:var(--card2);color:var(--text);font-weight:700;font-size:14.5px;display:flex;align-items:center;justify-content:center;text-decoration:none}',
     '.sfn{cursor:pointer}.sfn small{color:var(--dim);font-weight:600;font-size:12.5px;margin-left:4px}',
     '.sph[data-a=prof]{cursor:pointer}',
     '.pvh{display:flex;align-items:center;gap:14px;margin-bottom:14px}',
@@ -163,7 +164,8 @@ function renderHome() {
     return;
   }
   box.innerHTML = '<div class="shome"><div id="sMini"><p>Loading…</p></div><div class="sbtns" style="margin-top:10px">' +
-    '<button class="pri" id="sOpen">Open feed</button><button id="sFriends">👥 Friends</button></div></div>';
+    '<button class="pri" id="sOpen">Open feed</button><button id="sFriends">👥 Friends</button>' +
+    (owner && owner.dashboard_url ? '<a class="sdash" href="' + e(owner.dashboard_url) + '" target="_blank" rel="noopener">📊 Dashboard</a>' : '') + '</div></div>';
   $('sOpen').onclick = function () { buzz(); feedSheet(); };
   $('sFriends').onclick = function () { buzz(); friendsSheet(); };
   api('GET', '/api/feed').then(function (j) {
@@ -327,6 +329,7 @@ function buildSnapshot() {
 }
 /* push my snapshot (throttled; skipped if nothing changed) */
 function sync(force) {
+  if (token && enabled()) ownerSync(force);
   if (!token || !shareOn || !enabled()) return Promise.resolve();
   if (!force && Date.now() - lastSync < 5 * 60 * 1000) return Promise.resolve();
   return buildSnapshot().then(function (snap) {
@@ -334,6 +337,17 @@ function sync(force) {
     var sig = JSON.stringify(snap);
     if (!force && sig === lastSig) { lastSync = Date.now(); return; }
     return api('PUT', '/api/me/profile', snap).then(function () { lastSync = Date.now(); lastSig = sig; });
+  }).catch(function () {});
+}
+
+/* owner only (public app): upload every workout so the server's watch, dashboards and reports see them */
+function ownerSync(force) {
+  if (!owner || !window.GYM_PUBLIC || !Store.backupData) return Promise.resolve();
+  if (!force && Date.now() - lastOwnAt < 60 * 1000) return Promise.resolve();
+  return Store.backupData().then(function (d) {
+    var sig = (d.sessions || []).length + ':' + (d.sessions || []).reduce(function (m, x) { return Math.max(m, x.end || x.start || 0); }, 0);
+    if (!force && sig === lastOwnSig) { lastOwnAt = Date.now(); return; }
+    return api('PUT', '/api/owner/sessions', {sessions: d.sessions || []}).then(function () { lastOwnAt = Date.now(); lastOwnSig = sig; });
   }).catch(function () {});
 }
 
@@ -474,11 +488,16 @@ function init() {
   var m = location.hash.match(/friend=([A-Za-z0-9-]{8,9})/);
   if (m) pendingInvite = m[1].toUpperCase();
   if (!enabled()) { renderHome(); return Promise.resolve(); }
-  return Promise.all([Store.get('socialToken'), Store.get('socialMe')]).then(function (v) {
+  var lg = location.hash.match(/social-login=([A-Za-z0-9_-]{20,80})/), loginP = Promise.resolve();
+  if (lg && !window.GYM_PUBLIC) {   // owner's private build only: restore a friends login from a one-off link
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (err) {}
+    loginP = Promise.all([Store.set('socialToken', lg[1]), Store.set('socialMe', null)]);
+  }
+  return loginP.then(function () { return Promise.all([Store.get('socialToken'), Store.get('socialMe')]); }).then(function (v) {
     token = v[0] || null; me = v[1] || null;
     renderHome();
     Store.get('socialShare').then(function (x) { shareOn = x !== false; }, function () {});
-    if (token) api('GET', '/api/me').then(function (j) { remember(null, j.me); if (pendingInvite) acceptInvite(); setTimeout(sync, 1500); }).catch(function () {});
+    if (token) api('GET', '/api/me').then(function (j) { remember(null, j.me); if (j.owner) { owner = {dashboard_url: j.dashboard_url || ''}; renderHome(); } if (pendingInvite) acceptInvite(); setTimeout(sync, 1500); }).catch(function () {});
     else if (pendingInvite) whenQuiet(joinSheet);
   });
 }

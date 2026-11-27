@@ -973,6 +973,7 @@ function renderSummary() {
   var s = live.summary || {};
   if (summaryShownFor === live.id) return; summaryShownFor = live.id;
   if (IS_PUBLIC && window.Backup) Backup.snapshotAfterFinish();
+  if (IS_PUBLIC && window.Social) Social.sync(true);
   $('sTitle').textContent = live.routine + ' done';
   $('sSub').textContent = IS_PUBLIC ? 'Saved on this phone · download a backup below' : 'Saved to your history · dashboard updating';
   var dv = s.last_volume ? Math.round(100 * (s.volume - s.last_volume) / s.last_volume) : null;

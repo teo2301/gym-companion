@@ -152,6 +152,12 @@ def main():
         call(base, "PUT", "/api/me/profile", {"lv": 9999, "workouts": [{"title": "x" * 500}]}, token=B)
         check(call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"]["lv"] == 50, "profile values are clamped")
         check(call(base, "DELETE", "/api/me/profile", token=B)[0] == 200 and call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"] is None, "profile can be withdrawn")
+        check(call(base, "PUT", "/api/owner/sessions", {"sessions": []}, token=B)[0] == 403, "non-owner cannot sync workouts")
+        import sqlite3
+        k = sqlite3.connect(str(data / "social.db")); k.execute("INSERT OR REPLACE INTO meta VALUES ('owner_id', ?)", (b_me["id"],)); k.commit(); k.close()
+        check(call(base, "GET", "/api/me", token=B)[1].get("owner") is True and "owner" not in call(base, "GET", "/api/me", token=A)[1], "/api/me flags only the owner")
+        check(call(base, "PUT", "/api/owner/sessions", {"sessions": [{"id": "x1", "start": 1, "exercises": {}}, "junk"]}, token=B)[1].get("count") == 1, "owner uploads sessions")
+        check(call(base, "GET", "/api/owner/sessions", token=B)[1]["sessions"][0]["id"] == "x1" and call(base, "GET", "/api/owner/sessions", token=A)[0] == 403, "only the owner reads them back")
         old = b_me["code"]
         new = call(base, "POST", "/api/me/code", token=B)[1]["me"]["code"]
         check(new != old and call(base, "POST", "/api/friends", {"code": old}, token=C)[0] == 404, "reset code: old code dead")

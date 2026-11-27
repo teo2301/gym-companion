@@ -66,6 +66,8 @@ ORIGINS = set(filter(None, os.environ.get("ORIGINS", ",".join([
 
 MAX_JSON = 16 * 1024
 MAX_PROFILE_JSON = 64 * 1024
+MAX_SYNC_JSON = 6 * 1024 * 1024          # owner-only workout sync (whole history, a few hundred KB in practice)
+DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "")   # shown to the owner only, never baked into the public app
 MAX_IMAGE = 8 * 1024 * 1024          # upload cap; the app resizes to ~1600px first, so ~0.3-1 MB
 PHOTO_PX, AVATAR_PX = 1600, 256
 MEDIA_TTL = 6 * 3600                 # signed media links last 6 h (feeds are refetched often)
@@ -267,6 +269,11 @@ def limited(key, kind):
         return False
 
 
+def is_owner(con, uid):
+    r = con.execute("SELECT v FROM meta WHERE k='owner_id'").fetchone()
+    return bool(r) and r[0] == uid
+
+
 def are_friends(con, a, b):
     return a == b or bool(con.execute("SELECT 1 FROM friends WHERE a=? AND b=?", (a, b)).fetchone())
 
@@ -449,7 +456,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             if method == "GET":
-                return 200, {"ok": True, "me": user_json(me, me=True)}
+                out = {"ok": True, "me": user_json(me, me=True)}
+                if is_owner(con, uid):
+                    out["owner"] = True
+                    out["dashboard_url"] = DASHBOARD_URL
+                return 200, out
             if method == "POST":
                 name = clean_text(self._json().get("name"), 30)
                 if not name:
@@ -472,6 +483,17 @@ class Handler(BaseHTTPRequestHandler):
             con.execute("UPDATE users SET avatar=? WHERE id=?", (name, uid))
             drop_media(me["avatar"])
             return 200, {"ok": True, "me": reload_me()}
+        if path == "/api/owner/sessions":
+            if not is_owner(con, uid):
+                raise ApiError(403, "owner only")
+            f = DATA / "owner_sessions.json"
+            if method == "PUT":
+                body = self._json(MAX_SYNC_JSON)
+                sess = [x for x in (body.get("sessions") or []) if isinstance(x, dict)][:5000]
+                tmp = f.with_suffix(".tmp"); tmp.write_text(json.dumps({"updated": now_ms(), "sessions": sess})); tmp.replace(f)
+                return 200, {"ok": True, "count": len(sess)}
+            if method == "GET":
+                return 200, {"ok": True, "sessions": json.loads(f.read_text())["sessions"] if f.exists() else []}
         if path == "/api/me/profile":
             if method == "PUT":
                 prof = clean_profile(self._json(MAX_PROFILE_JSON))
