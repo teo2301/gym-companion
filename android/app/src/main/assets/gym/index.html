@@ -973,7 +973,7 @@ function renderSummary() {
   var s = live.summary || {};
   if (summaryShownFor === live.id) return; summaryShownFor = live.id;
   if (IS_PUBLIC && window.Backup) Backup.snapshotAfterFinish();
-  if (IS_PUBLIC && window.Social) Social.sync(true);
+  if (window.Social) Social.sync(true);
   $('sTitle').textContent = live.routine + ' done';
   $('sSub').textContent = IS_PUBLIC ? 'Saved on this phone · download a backup below' : 'Saved to your history · dashboard updating';
   var dv = s.last_volume ? Math.round(100 * (s.volume - s.last_volume) / s.last_volume) : null;
@@ -1594,6 +1594,6 @@ GymStore.create({}).then(function (s) {
   console.error('gym boot', e); setOnline(false); $('hellosub').textContent = "Couldn't start Gym";
 });
 document.addEventListener('visibilitychange', function () { if (!document.hidden && !polling && Store) poll(); });
-if (!IS_PUBLIC && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
+if (!IS_PUBLIC && !window.GYM_PUBLIC && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
 </script>
 </body></html>

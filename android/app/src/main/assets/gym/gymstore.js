@@ -624,40 +624,49 @@ function makePublic(c) {
 
 /* ---------- private (server-backed) store ---------- */
 
-function makePrivate() {
-  var store = {mode: 'private', saveFile: saveFile, pickFile: pickFile};
-  store.get = function (k) { return Promise.resolve(lsGet(LS_KEYS[k] || ('gym' + k))); };
-  store.set = function (k, v) { lsSet(LS_KEYS[k] || ('gym' + k), v); return Promise.resolve(v); };
+/* opts (optional): {base, token, local} = the public app talking to the OWNER'S server through the friends API
+ * (watch live link, dashboards' data). base ends with '/'; token authenticates; local = the on-device store,
+ * which keeps the app's own settings (friends login, skin tone, photos). Without opts: the private build. */
+function makePrivate(opts) {
+  opts = opts || {};
+  var base = opts.base || '../api/gym/', auth = opts.token ? {Authorization: 'Bearer ' + opts.token} : {};
+  function hdr(h) { var o = {}, k; for (k in auth) o[k] = auth[k]; for (k in (h || {})) o[k] = h[k]; return o; }
+  function rget(path) { return fetchJson(base + path, opts.token ? {headers: hdr()} : undefined); }
+  function rpost(path, obj) { return fetchJson(base + path, {method: 'POST', headers: hdr({'Content-Type': 'application/json'}), body: JSON.stringify(obj || {})}); }
+  var store = {mode: 'private', remote: !!opts.token, saveFile: saveFile, pickFile: pickFile};
+  store.get = function (k) { return opts.local ? opts.local.get(k) : Promise.resolve(lsGet(LS_KEYS[k] || ('gym' + k))); };
+  store.set = function (k, v) { if (opts.local) return opts.local.set(k, v); lsSet(LS_KEYS[k] || ('gym' + k), v); return Promise.resolve(v); };
   store.settings = function () {
+    if (opts.local) return opts.local.settings();
     var out = {};
     KEYS.forEach(function (k) { out[k] = lsGet(LS_KEYS[k]); });
     return Promise.resolve(out);
   };
-  store.plan = function () { return fetchJson('../api/gym/plan'); };
-  store.progress = function () { return fetchJson('../api/gym/progress'); };
+  store.plan = function () { return rget('plan'); };
+  store.progress = function () { return rget('progress'); };
   store.live = function (v) {
     var wait = global.GYM_NO_POLL ? 0 : 25;
-    return fetchJson('../api/gym/live?v=' + encodeURIComponent(v == null ? -1 : v) + '&wait=' + wait);
+    return rget('live?v=' + encodeURIComponent(v == null ? -1 : v) + '&wait=' + wait);
   };
   store.op = function (o) {
     var body = o && o.ops ? o : {ops: [o]};
-    return postJson('../api/gym/op', body);
+    return rpost('op', body);
   };
-  store.history = function (name) { return fetchJson('../api/gym/history?name=' + encodeURIComponent(name || '')); };
-  store.workouts = function () { return fetchJson('../api/gym/workouts'); };
-  store.stats = function () { return fetchJson('../api/gym/stats'); };
+  store.history = function (name) { return rget('history?name=' + encodeURIComponent(name || '')); };
+  store.workouts = function () { return rget('workouts'); };
+  store.stats = function () { return rget('stats'); };
   store.canLogBodyweight = false;          // private: bodyweight comes from the smart scale (Health Connect)
-  store.workout = function (id) { return fetchJson('../api/gym/workouts?id=' + encodeURIComponent(id)); };
+  store.workout = function (id) { return rget('workouts?id=' + encodeURIComponent(id)); };
   // read the JSON even on 4xx, so the server's reason (e.g. Hevy imports are read-only) reaches the user
   function postWorkout(body) {
-    return fetch('../api/gym/workout', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+    return fetch(base + 'workout', {method: 'POST', headers: hdr({'Content-Type': 'application/json'}), body: JSON.stringify(body)})
       .then(function (r) { return r.json().catch(function () { return {ok: false, error: 'HTTP ' + r.status}; }); });
   }
   store.saveWorkout = function (id, edit) { return postWorkout({id: id, title: edit.title, exercises: edit.exercises}); };
   store.deleteWorkout = function (id) { return postWorkout({id: id, delete: true}); };
-  store.note = function (name, text) { return postJson('../api/gym/note', {name: name, text: text}); };
-  store.routine = function (payload) { return postJson('../api/gym/routine', payload); };
-  store.customExercise = function (payload) { return postJson('../api/gym/custom', payload); };
+  store.note = function (name, text) { return rpost('note', {name: name, text: text}); };
+  store.routine = function (payload) { return rpost('routine', payload); };
+  store.customExercise = function (payload) { return rpost('custom', payload); };
   store.onboard = function (o) {
     o = o || {};
     var seed = bestsFromMaxes(o.maxes);
@@ -666,9 +675,9 @@ function makePrivate() {
     lsSet(LS_KEYS.onboarded, true);
     return Promise.resolve({ok: true, seedBests: seed});
   };
-  store.backupData = function () { return fetchJson('../api/gym/backup'); };
+  store.backupData = function () { return rget('backup'); };
   store.restore = function (data, strategy) {
-    return postJson('../api/gym/restore', {data: data, strategy: strategy || 'merge'})
+    return rpost('restore', {data: data, strategy: strategy || 'merge'})
       .catch(function () { return {ok: false, error: 'Server restore unavailable'}; });
   };
   store.snapshot = function () { return Promise.resolve(null); };  // server already persists
@@ -685,7 +694,15 @@ global.GymStore = {
     var c = {sessions: [], bodyweight: 75, seedBests: {}, routines: {templates: {}, hidden: []},
       notes: {}, custom: [], lastLv: 0};
     var store = makePublic(c);
-    return Promise.all([refreshCache(c), loadPresets()]).then(function () { return store; });
+    return Promise.all([refreshCache(c), loadPresets()]).then(function () {
+      // Owner link: after the owner signs in once (social.js stores gymRemoteTok), use the owner's own server
+      // for everything (live watch link, history, dashboards). If it can't be reached, stay on this device.
+      var tok = options.remote === false ? null : lsGet('gymRemoteTok'), api = String(global.GYM_SOCIAL_API || '').replace(/\/+$/, '');
+      if (!global.GYM_PUBLIC || !tok || !api || lsGet('gymRemoteOff')) return store;
+      var rs = makePrivate({base: api + '/api/owner/srv/', token: tok, local: store});
+      return Promise.race([rs.plan(), new Promise(function (_, rej) { setTimeout(function () { rej(new Error('timeout')); }, 7000); })])
+        .then(function () { return rs; }, function () { return store; });
+    });
   }
 };
 })(window);

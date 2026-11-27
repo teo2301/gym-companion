@@ -217,6 +217,7 @@ function profileSheet() {
   openSheet('<h2 style="margin:0 0 12px;font-size:24px">Your profile</h2>' +
     '<div style="display:flex;align-items:center;gap:14px;margin-bottom:12px">' + avatar(me, 'big') + '<div style="flex:1">' + photoPicker('sAva2', 'Change photo') + '</div></div>' +
     '<input class="txt" id="sName2" maxlength="30" value="' + e(me.name) + '">' +
+    (owner && window.GYM_PUBLIC ? '<label class="stog"><input type="checkbox" id="sUseSrv"' + (Store.remote ? ' checked' : '') + '><span>Use my server (watch live link, dashboards)</span></label>' : '') +
     '<label class="stog"><input type="checkbox" id="sShareProf"' + (shareOn ? ' checked' : '') + '><span>Let friends see my level and recent workouts</span></label>' +
     '<button class="log" id="sSaveP">Save</button>' +
     '<button class="finish" id="sReset">Get a new friend code</button>' +
@@ -225,11 +226,13 @@ function profileSheet() {
   $('sSaveP').onclick = function () {
     var name = $('sName2').value.trim();
     var jobs = [];
+    var srv = $('sUseSrv'), srvChange = srv && srv.checked !== !!Store.remote;
+    if (srvChange) { try { if (srv.checked) localStorage.removeItem('gymRemoteOff'); else localStorage.setItem('gymRemoteOff', '1'); localStorage.setItem('gymRemoteTok', token); } catch (err) {} }
     var want = $('sShareProf').checked;
     if (want !== shareOn) { shareOn = want; Store.set('socialShare', want); jobs.push(want ? sync(true) : api('DELETE', '/api/me/profile')); }
     if (name && name !== me.name) jobs.push(api('POST', '/api/me', {name: name}).then(function (j) { remember(null, j.me); }));
     if (blob) jobs.push(api('PUT', '/api/me/avatar', undefined, blob).then(function (j) { remember(null, j.me); }));
-    Promise.all(jobs).then(function () { closeSheet(); toastOk('Profile saved'); renderHome(); }).catch(function (err) { toast(err.message); });
+    Promise.all(jobs).then(function () { if (srvChange) { location.reload(); return; } closeSheet(); toastOk('Profile saved'); renderHome(); }).catch(function (err) { toast(err.message); });
   };
   $('sReset').onclick = function () {
     if (!confirm('Make a new friend code? Your old code and invite links stop working (current friends stay).')) return;
@@ -340,9 +343,18 @@ function sync(force) {
   }).catch(function () {});
 }
 
+/* owner only: after signing in once, the public app talks to the owner's own server (watch live link, all
+ * history and dashboards' data) via the friends API; GymStore falls back to this device if it can't reach it. */
+function linkOwner() {
+  if (!window.GYM_PUBLIC || !token || Store.remote) return;
+  try {
+    if (localStorage.getItem('gymRemoteOff')) return;
+    if (localStorage.getItem('gymRemoteTok') !== token) { localStorage.setItem('gymRemoteTok', token); location.reload(); }
+  } catch (err) {}
+}
 /* owner only (public app): upload every workout so the server's watch, dashboards and reports see them */
 function ownerSync(force) {
-  if (!owner || !window.GYM_PUBLIC || !Store.backupData) return Promise.resolve();
+  if (!owner || !window.GYM_PUBLIC || Store.mode !== 'public' || !Store.backupData) return Promise.resolve();
   if (!force && Date.now() - lastOwnAt < 60 * 1000) return Promise.resolve();
   return Store.backupData().then(function (d) {
     var sig = (d.sessions || []).length + ':' + (d.sessions || []).reduce(function (m, x) { return Math.max(m, x.end || x.start || 0); }, 0);
@@ -497,7 +509,7 @@ function init() {
     token = v[0] || null; me = v[1] || null;
     renderHome();
     Store.get('socialShare').then(function (x) { shareOn = x !== false; }, function () {});
-    if (token) api('GET', '/api/me').then(function (j) { remember(null, j.me); if (j.owner) { owner = {dashboard_url: j.dashboard_url || ''}; renderHome(); } if (pendingInvite) acceptInvite(); setTimeout(sync, 1500); }).catch(function () {});
+    if (token) api('GET', '/api/me').then(function (j) { remember(null, j.me); if (j.owner) { owner = {dashboard_url: j.dashboard_url || ''}; renderHome(); linkOwner(); } if (pendingInvite) acceptInvite(); setTimeout(sync, 1500); }).catch(function () {});
     else if (pendingInvite) whenQuiet(joinSheet);
   });
 }

@@ -67,6 +67,8 @@ ORIGINS = set(filter(None, os.environ.get("ORIGINS", ",".join([
 MAX_JSON = 16 * 1024
 MAX_PROFILE_JSON = 64 * 1024
 MAX_SYNC_JSON = 6 * 1024 * 1024          # owner-only workout sync (whole history, a few hundred KB in practice)
+OWNER_UPSTREAM = os.environ.get("OWNER_UPSTREAM", "").rstrip("/")   # the owner's private gym server (proxied for the owner only)
+OWNER_SRV = {"plan", "progress", "live", "op", "history", "workouts", "stats", "workout", "note", "routine", "custom", "backup"}
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "")   # shown to the owner only, never baked into the public app
 MAX_IMAGE = 8 * 1024 * 1024          # upload cap; the app resizes to ~1600px first, so ~0.3-1 MB
 PHOTO_PX, AVATAR_PX = 1600, 256
@@ -345,6 +347,25 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(413, "too large")
         return self.rfile.read(n) if n else b""
 
+    def _proxy(self, method, upstream_path, query):
+        """Forward one call to the owner's private gym server (watch live link). Owner-only; the private
+        server has no login of its own and is never exposed directly."""
+        import urllib.error
+        import urllib.request
+        body = self._body(MAX_SYNC_JSON) if method == "POST" else None
+        req = urllib.request.Request(OWNER_UPSTREAM + upstream_path + ("?" + query if query else ""), data=body, method=method,
+                                     headers={"Content-Type": "application/json"} if body is not None else {})
+        try:
+            with urllib.request.urlopen(req, timeout=40) as r:
+                return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read() or b"{}")
+            except ValueError:
+                raise ApiError(e.code, "server error")
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            raise ApiError(502, "your server is unreachable")
+
     def _json(self, limit=MAX_JSON):
         try:
             v = json.loads(self._body(limit) or b"{}")
@@ -397,6 +418,20 @@ class Handler(BaseHTTPRequestHandler):
                 kind = "register"
             if limited(self._ip(), kind):
                 raise ApiError(429, "slow down")
+            ps = re.fullmatch(r"(?:/gs)?/api/owner/srv/([a-z]+)", path)
+            if ps:                              # long-polls: authenticate under the lock, forward OUTSIDE it
+                with _db_lock:
+                    con = db()
+                    try:
+                        owner_ok = is_owner(con, self._user(con)["id"])
+                    finally:
+                        con.close()
+                if not owner_ok:
+                    raise ApiError(403, "owner only")
+                if not OWNER_UPSTREAM or ps.group(1) not in OWNER_SRV or method not in ("GET", "POST"):
+                    raise ApiError(404, "not found")
+                code, obj = self._proxy(method, "/api/gym/" + ps.group(1), url.query)
+                return self._send(code, obj)
             with _db_lock:                      # SQLite + tiny traffic: one writer at a time is plenty
                 con = db()
                 try:

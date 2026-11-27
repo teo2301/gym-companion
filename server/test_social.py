@@ -67,7 +67,16 @@ def jpeg_with_gps(w=3000, h=2000):
 def main():
     data = Path(tempfile.mkdtemp(prefix="gym-social-test-"))
     port = free_port()
-    env = dict(os.environ, DATA_DIR=str(data), PORT=str(port))
+    import http.server, threading
+    class Stub(http.server.BaseHTTPRequestHandler):
+        def _r(self):
+            n = int(self.headers.get("Content-Length") or 0); body = self.rfile.read(n).decode()
+            out = json.dumps({"ok": True, "path": self.path, "method": self.command, "body": body}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(out)
+        do_GET = do_POST = _r
+        def log_message(self, *a): pass
+    stub = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Stub); threading.Thread(target=stub.serve_forever, daemon=True).start()
+    env = dict(os.environ, DATA_DIR=str(data), PORT=str(port), OWNER_UPSTREAM="http://127.0.0.1:%d" % stub.server_address[1])
     proc = subprocess.Popen([sys.executable, str(HERE / "social.py")], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     base = "http://127.0.0.1:%d" % port
     try:
@@ -158,6 +167,12 @@ def main():
         check(call(base, "GET", "/api/me", token=B)[1].get("owner") is True and "owner" not in call(base, "GET", "/api/me", token=A)[1], "/api/me flags only the owner")
         check(call(base, "PUT", "/api/owner/sessions", {"sessions": [{"id": "x1", "start": 1, "exercises": {}}, "junk"]}, token=B)[1].get("count") == 1, "owner uploads sessions")
         check(call(base, "GET", "/api/owner/sessions", token=B)[1]["sessions"][0]["id"] == "x1" and call(base, "GET", "/api/owner/sessions", token=A)[0] == 403, "only the owner reads them back")
+        s, r, _ = call(base, "GET", "/api/owner/srv/live?v=3&wait=0", token=B)
+        check(s == 200 and r["path"] == "/api/gym/live?v=3&wait=0", "owner proxy forwards GET to the private server")
+        s, r, _ = call(base, "POST", "/api/owner/srv/op", {"ops": [{"id": "1"}]}, token=B)
+        check(s == 200 and r["method"] == "POST" and '"ops"' in r["body"], "owner proxy forwards POST bodies")
+        check(call(base, "GET", "/api/owner/srv/plan", token=A)[0] == 403 and call(base, "GET", "/api/owner/srv/plan")[0] == 401, "proxy refuses non-owners and anonymous")
+        check(call(base, "GET", "/api/owner/srv/restore", token=B)[0] == 404, "proxy only forwards whitelisted calls")
         old = b_me["code"]
         new = call(base, "POST", "/api/me/code", token=B)[1]["me"]["code"]
         check(new != old and call(base, "POST", "/api/friends", {"code": old}, token=C)[0] == 404, "reset code: old code dead")

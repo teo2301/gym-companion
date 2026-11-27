@@ -16,6 +16,7 @@ services:
     env_file:
       - path: ./social.env           # extra allowed app origins (private copies); gitignored, optional
         required: false
+    extra_hosts: ["host.docker.internal:host-gateway"]   # owner-only proxy to the private gym server
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
