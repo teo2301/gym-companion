@@ -13,7 +13,7 @@ Goal: the best free progress tracking of any gym app. Each item ships on its own
       for your bodyweight, from coaching standards, where the lift has one), labelled directly.
       (c) A dashed-free projection: "at your recent rate you reach X kg by <date>" as text, using a
       least-squares fit of the last 8 sessions (only when the trend is positive and n >= 4).
-- [ ] **Muscle-group trends (small multiples).** Weekly sets for Push / Pull / Legs / Core as four
+- [x] **Muscle-group trends (small multiples).** Weekly sets for Push / Pull / Legs / Core as four
       small single-series charts sharing one y-scale (no multi-colour lines), within the period.
 - [ ] **Workout quality.** Per-workout duration and density (kg per minute) trends, plus a "best
       workouts" table (highest volume, most sets, longest) within the period.
