@@ -17,7 +17,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC=${GYM_SRC:-$HOME/projects/services/serverchat/static/gym}
 DOCS="$ROOT/docs"
 ASSETS="$ROOT/android/app/src/main/assets/gym"
-APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js social.js exercises.json manifest.json
+APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js social.js charts.js progress.js exercises.json manifest.json
            icon-180.png icon-192.png icon-512.png)
 
 SOCIAL_API=${GYM_SOCIAL_API:-$(cat "$HOME/.config/gym-companion/social-api.txt" 2>/dev/null)}

@@ -212,7 +212,8 @@ function asArray(v) { return Array.isArray(v) ? v : []; }
 /* ---------- plan primitives ---------- */
 
 // Estimated 1RM (Epley), rounded like gym_api._e1rm.
-function e1rm(w, r) { w = num(w); r = num(r); return w <= 0 || r <= 0 ? 0 : r1(w * (1 + r / 30)); }
+// rounded like Python's round(x, 1) (half to even), so records and PRs match the server exactly
+function e1rm(w, r) { w = num(w); r = num(r); return w <= 0 || r <= 0 ? 0 : pyRound(w * (1 + r / 30) * 10) / 10; }
 
 function step(name) {
   var n = String(name || '').toLowerCase();
@@ -450,6 +451,50 @@ function overall(levels) {
   var lv = clamp((raw >= 0 ? Math.floor(raw) : Math.ceil(raw)) + 1, 1, 50);
   var xp = r2(raw - (raw >= 0 ? Math.floor(raw) : Math.ceil(raw)));
   return {score: Math.round(sc * 1000) / 1000, lv: lv, xp: xp, tier: ti >= 0 ? LEVELS[ti] : 'Untrained', tier_index: ti};
+}
+
+/* ---------- Progress screen data (mirrors gym_api.stats) */
+function stats(sessions, bodyweights) {
+  sessions = normalizeSessions(sessions);
+  var workouts = [], ex = {}, order = [], prs = [], i, name;
+  for (i = 0; i < sessions.length; i++) {
+    var s = sessions[i];
+    if (SKIP_TITLES.test(s.title)) continue;
+    var sets = 0, reps = 0, vol = 0;
+    for (name in s.exercises) {
+      if (!has(s.exercises, name)) continue;
+      var ss = s.exercises[name];
+      if (!ss || !ss.length || !isStrength(ss)) continue;
+      var work = workSets(ss), v = 0, top = null, topE = -1, heavy = 0, j, x, e;
+      for (j = 0; j < work.length; j++) {
+        x = work[j]; sets++; reps += setR(x); v += setW(x) * setR(x);
+        e = e1rm(setW(x), setR(x));
+        if (top === null || e > topE || (e === topE && setW(x) > setW(top))) { top = x; topE = e; }
+        if (setW(x) > heavy) heavy = setW(x);
+      }
+      vol += v;
+      var r = ex[name];
+      if (!r) { r = ex[name] = {name: name, sessions: 0, first_date: s.date_str, last_date: null, best_e1rm: 0, best_e1rm_date: null,
+        heaviest: 0, heaviest_date: null, best_volume: 0, total_reps: 0, total_volume: 0}; order.push(name); }
+      if (r.sessions && topE > r.best_e1rm && r.best_e1rm > 0)
+        prs.push({date: s.date_str, ex: name, kind: 'e1rm', w: setW(top), r: setR(top), e1rm: topE});
+      if (r.sessions && heavy > r.heaviest && r.heaviest > 0) {
+        var hr = 0; for (j = 0; j < work.length; j++) if (setW(work[j]) === heavy) hr = Math.max(hr, setR(work[j]));
+        prs.push({date: s.date_str, ex: name, kind: 'weight', w: heavy, r: hr, e1rm: topE});
+      }
+      if (topE > r.best_e1rm) { r.best_e1rm = topE; r.best_e1rm_date = s.date_str; }
+      if (heavy > r.heaviest) { r.heaviest = heavy; r.heaviest_date = s.date_str; }
+      r.best_volume = Math.max(r.best_volume, pyRound(v));
+      r.sessions++; r.last_date = s.date_str;
+      for (j = 0; j < work.length; j++) r.total_reps += setR(work[j]);
+      r.total_volume += pyRound(v);
+    }
+    if (sets) workouts.push({date: s.date_str, title: s.title, minutes: num(s.duration_min) || 0, sets: sets, reps: reps, volume: pyRound(vol)});
+  }
+  var exercises = order.map(function (n) { return ex[n]; }).sort(function (a, b) {
+    return (b.sessions - a.sessions) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  });
+  return {workouts: workouts, exercises: exercises, prs: prs, bodyweight: asArray(bodyweights).slice()};
 }
 
 /* ---------- session normalisation (live CSV shapes -> one shape) ---------- */
@@ -1001,7 +1046,7 @@ global.GymCore = {
   presets: function () { return PRESET_NAMES.slice(); },
   rateLift: rateLift, score: score, muscleLevels: muscleLevels, overall: overall, progress: progress,
   bodyWeek: bodyWeek, weekStats: weekStats, history: exerciseHistory, buildPlan: buildPlan,
-  summary: summary, newExercise: newExercise, applyOp: applyOp,
+  summary: summary, newExercise: newExercise, applyOp: applyOp, stats: stats,
   csvRows: csvRows, csv: csv, normalizeSession: normalizeSession, normalizeSessions: normalizeSessions
 };
 })(window);

@@ -331,6 +331,7 @@ textarea.txt{min-height:96px;resize:none}
       <div class="xp"><i id="xpBar"></i></div><div class="lnext" id="lvNext"></div></div></div>
   <div id="heroBox"><div class="skel" style="height:190px"></div></div>
   <div id="weekSec" style="display:none"><div class="labelrow"><div class="label">Your weeks</div></div><div class="wkcard" id="weekCard"></div></div>
+  <button class="pgopen" id="openProg">📈 <span>Progress &amp; charts</span></button>
   <div id="socialSec" style="display:none"><div class="labelrow"><div class="label">Friends</div></div><div id="socialBox"></div></div>
   <div class="labelrow"><div class="label">Your body</div>
     <div class="seg" id="bodySeg"><button data-m="week" class="on">This week</button><button data-m="rec">Recovery</button><button data-m="str">Strength</button></div></div>
@@ -412,6 +413,8 @@ textarea.txt{min-height:96px;resize:none}
 <script src="backup.js"></script>
 <script src="pwa.js"></script>
 <script src="social.js"></script>
+<script src="charts.js"></script>
+<script src="progress.js"></script>
 
 <script>
 'use strict';
@@ -678,6 +681,7 @@ function nextTarget(ex) {
   return t[Math.min(n, t.length - 1)] || ex.done[n - 1] || {w: 20, r: 10};
 }
 function render() {
+  if (cur === 'prog') return;            // reading Progress: don't pull the screen away; leaving it re-renders
   if (!live) { if (cur !== 'home') show('home'); if (!plan) loadPlan(); hideRest(); return; }
   if (live.finished) { renderSummary(); show('done'); hideRest(); return; }
   if (cur !== 'work') show('work');
@@ -1030,6 +1034,10 @@ function renderToday() {
 /* ---------- exercise history */
 function historySheet(name) {
   openSheet('<h2 style="margin:0 0 2px;font-size:22px">' + esc(name) + '</h2><p class="sub" style="margin-bottom:4px">Loading history…</p>');
+  var chartsLink = function () {
+    var b = document.createElement('button'); b.className = 'pgopen'; b.innerHTML = '📈 <span>Charts &amp; rep maxes</span>';
+    b.onclick = function () { buzz(); Progress.exercise(name); }; return b;
+  };
   Store.history(name).then(function (h) {
     var S = h.sessions || [];
     if (!S.length) { $('sheetBody').innerHTML = '<h2 style="margin:0;font-size:22px">' + esc(name) + '</h2><p class="sub">No history yet — this will fill in as you log it.</p>'; return; }
@@ -1047,6 +1055,7 @@ function historySheet(name) {
         return '<div class="hrow"><div>' + ukd(x.date) + (x.pr ? ' <span class="pr">PR</span>' : '') + '</div><span class="num">' + setsTxt(x.sets) + '</span></div>';
       }).join('');
     $('sheetBody').innerHTML = html;
+    $('sheetBody').insertBefore(chartsLink(), $('sheetBody').children[2] || null);
     drawMap($('hMap'), exFills([{muscles: h.muscles}]));
     var ln = $('sheetBody').querySelector('.ln');
     if (ln) { var L = ln.getTotalLength(); ln.style.strokeDasharray = L; ln.style.strokeDashoffset = L; ln.getBoundingClientRect(); ln.style.transition = 'stroke-dashoffset 1.1s cubic-bezier(.2,.8,.2,1)'; ln.style.strokeDashoffset = 0; }
@@ -1374,6 +1383,7 @@ function settingsSheet() {
 GymStore.create({}).then(function (s) {
   Store = s; IS_PUBLIC = Store.mode === 'public'; window.Store = Store; window.IS_PUBLIC = IS_PUBLIC;
   if (window.Backup) Backup.init(Store);
+  $('openProg').onclick = function () { buzz(); Progress.open(); };
   if (window.Social) {
     Social.init();
     $('doneShare').style.display = Social.enabled() ? '' : 'none';

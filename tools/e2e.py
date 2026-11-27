@@ -112,6 +112,26 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     tap(page, "#homeBtn")
     page.wait_for_timeout(1500)
 
+    # Progress & charts: opens offline, counts the workout, logs bodyweight, exercise detail, table view, Back
+    page.locator("#openProg").scroll_into_view_if_needed(); page.click("#openProg")
+    page.wait_for_selector("#pg_train svg", timeout=10000)
+    tiles = page.inner_text(".pgtiles")
+    if "Workouts\n1" not in tiles:
+        problems.append("progress tiles don't count the workout: %r" % tiles[:80])
+    page.fill("#pgBwIn", "81.5"); page.click("#pgBwGo"); page.wait_for_timeout(800)
+    if "81.5" not in page.inner_text("#pgn_bw"):
+        problems.append("bodyweight log not shown")
+    page.click('[data-tab="train"]'); page.wait_for_selector("#pg_train table", timeout=3000); page.click('[data-tab="train"]')
+    page.locator("#pg_ex .pgrow").first.scroll_into_view_if_needed(); page.locator("#pg_ex .pgrow").first.click()
+    page.wait_for_selector("#exReps table", timeout=8000)
+    page.screenshot(path=SHOTS / f"{tag}-4c-exercise.png")
+    page.evaluate("closeSheet()"); page.wait_for_timeout(300)
+    page.evaluate("document.getElementById('pg_train').scrollIntoView({block:'center'})"); page.wait_for_timeout(200)
+    page.screenshot(path=SHOTS / f"{tag}-4d-progress.png")
+    if not page.evaluate("GymBack()") or page.evaluate("cur") != "home":
+        problems.append("Back from Progress did not return home")
+    page.wait_for_timeout(600)
+
     # Edit the finished workout from Recent workouts: change reps, add a set, save
     page.locator("#workouts .wcard").first.scroll_into_view_if_needed()
     page.locator("#workouts .wcard").first.click()

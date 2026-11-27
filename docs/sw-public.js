@@ -3,9 +3,9 @@
  * Strategy: serve from cache, refresh in the background; a new CACHE name drops old copies.
  * Bump CACHE whenever any shipped file changes (tools/build.sh does this from a content hash).
  */
-var CACHE = 'gym-public-a9d7864a39c2';
+var CACHE = 'gym-public-d5bdf1eaad22';
 var SHELL = ['./', 'index.html', 'config.js', 'body.js', 'character.js', 'gymcore.js', 'gymstore.js',
-  'backup.js', 'pwa.js', 'social.js', 'exercises.json', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+  'backup.js', 'pwa.js', 'social.js', 'charts.js', 'progress.js', 'exercises.json', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
   // cache: 'reload' skips the browser's HTTP cache (GitHub Pages sets max-age=600), so a new version

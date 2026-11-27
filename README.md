@@ -8,6 +8,11 @@ bodyweight-relative standards per muscle group.
 (JSON for restore, CSV for spreadsheets). Also: 190 preset exercises, editable routines and workouts,
 weekly averages and streaks, and a character with a choice of skin tone.
 
+**Progress & charts (free):** training per week (volume / sets / workouts / time), a consistency
+calendar, lifter level over time, sets per muscle vs the 10-20 range, strength by muscle, bodyweight
+trend, PR timeline, and per exercise: estimated 1RM / heaviest / volume / reps charts with PRs marked,
+rep maxes and recent sessions. One period filter (1M-All) scopes everything; every chart has a table view.
+
 **Friends (optional):** add friends with a code or invite link and share workouts with progress photos;
 only you and your friends see them. Runs on a small server (`server/`) for friends & family for now.
 

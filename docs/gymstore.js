@@ -6,12 +6,12 @@
 'use strict';
 
 var DB_NAME = 'gym-companion';
-var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot', 'skinTone', 'socialToken', 'socialMe'];
+var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot', 'skinTone', 'socialToken', 'socialMe', 'bwLog'];
 var LS_KEYS = {
   bodyweight: 'gymBodyweight', lastLv: 'gymLv', lastBackupAt: 'gymLastBackupAt',
   onboarded: 'gymOnboarded', seedBests: 'gymSeedBests', routines: 'gymRoutines',
   notes: 'gymNotes', custom: 'gymCustom', snapshot: 'gymSnapshot', lastBackupNudge: 'gymBackupNudge',
-  skinTone: 'gymSkinTone', socialToken: 'gymSocialToken', socialMe: 'gymSocialMe'
+  skinTone: 'gymSkinTone', socialToken: 'gymSocialToken', socialMe: 'gymSocialMe', bwLog: 'gymBwLog'
 };
 var UPPER = ['chest', 'front_delts', 'side_delts', 'rear_delts', 'triceps', 'biceps', 'lats', 'upper_back', 'traps', 'forearms', 'abs', 'obliques'];
 var LOWER = ['quads', 'hamstrings', 'glutes', 'calves', 'adductors', 'lower_back'];
@@ -103,6 +103,7 @@ function sessionPut(s) {
   return idb('sessions', 'readwrite', function (st) { return st.put(clone(s)); })
     .catch(function () { _noIdb = true; return sessionPut(s); });
 }
+function dateStrLocal(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 function sessionDelete(id) {
   if (_noIdb) { mem().sessions = mem().sessions.filter(function (x) { return x.id !== id; }); memSave(); return Promise.resolve(); }
   return idb('sessions', 'readwrite', function (s) { return s.delete(id); });
@@ -322,6 +323,27 @@ function makePublic(c) {
   };
   store.live = function () { return kvGet('live').then(stateOut); };
 
+  /* ---------- Progress screen */
+  store.stats = function () {
+    return Promise.all([refreshCache(c), kvGet('bwLog')]).then(function (v) {
+      var log = asArray(v[1]);
+      if (!log.length && c.bodyweight) log = [{date: dateStrLocal(new Date()), kg: c.bodyweight}];
+      return core().stats(c.sessions, log);
+    });
+  };
+  store.canLogBodyweight = true;
+  store.logBodyweight = function (kg) {
+    kg = Math.round(num(kg) * 10) / 10;
+    if (!(kg >= 25 && kg <= 300)) return Promise.reject(new Error('Enter a weight between 25 and 300 kg'));
+    var today = dateStrLocal(new Date());
+    return kvGet('bwLog').then(function (log) {
+      log = asArray(log).filter(function (x) { return x && x.date !== today; });
+      log.push({date: today, kg: kg});
+      log.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+      return Promise.all([kvSet('bwLog', log), kvSet('bodyweight', kg)]);   // latest weigh-in also drives the strength levels
+    }).then(function () { return refreshCache(c); }).then(function () { return {ok: true}; });
+  };
+
   /* ---------- past workouts: list, open, edit, delete (all on-device) */
   function workoutJson(raw) {
     var n = core().normalizeSession(raw), exs = [], vol = 0, sets = 0;
@@ -515,7 +537,7 @@ function makePublic(c) {
     strategy = strategy === 'replace' ? 'replace' : 'merge';
     var counts = {sessions: 0, sessionsAdded: 0, seedBests: 0, routines: 0, notes: 0, custom: 0};
     return Promise.all([sessionsAll(), kvGet('seedBests'), kvGet('routines'), kvGet('notes'),
-      kvGet('custom'), kvGet('bodyweight'), kvGet('lastLv'), kvGet('socialToken')]).then(function (v) {
+      kvGet('custom'), kvGet('bodyweight'), kvGet('lastLv'), kvGet('socialToken'), kvGet('bwLog')]).then(function (v) {
       var existing = asArray(v[0]), incoming = asArray(data.sessions), next = {}, tasks = [];
       counts.sessions = incoming.length;
       var pick = function (key, fallback) {
@@ -532,6 +554,7 @@ function makePublic(c) {
         next.lastLv = pick('lastLv', 0);
         next.skinTone = pick('skinTone', null);
         next.socialToken = pick('socialToken', null); next.socialMe = pick('socialMe', null);   // friends login
+        next.bwLog = asArray(pick('bwLog', []));
         counts.sessionsAdded = next.sessions.length;
         // Clear strictly before writing, so the restored sessions can never be wiped by the clear.
         tasks.push(sessionsClear().then(function () {
@@ -566,6 +589,8 @@ function makePublic(c) {
         next.bodyweight = v[5] == null ? pick('bodyweight', 75) : v[5];
         next.lastLv = v[6] == null ? pick('lastLv', 0) : v[6];
         var tn = pick('skinTone', null); if (tn) next.skinTone = tn;
+        var bwm = {}; asArray(v[8]).concat(asArray(pick('bwLog', []))).forEach(function (x) { if (x && x.date) bwm[x.date] = x; });
+        next.bwLog = Object.keys(bwm).sort().map(function (d) { return bwm[d]; });   // merge weigh-ins by day
         if (!v[7] && pick('socialToken', null)) { next.socialToken = pick('socialToken', null); next.socialMe = pick('socialMe', null); }   // merge: keep yours unless the backup has one
         added.forEach(function (s) { tasks.push(sessionPut(s)); });
       }
@@ -610,6 +635,8 @@ function makePrivate() {
   };
   store.history = function (name) { return fetchJson('../api/gym/history?name=' + encodeURIComponent(name || '')); };
   store.workouts = function () { return fetchJson('../api/gym/workouts'); };
+  store.stats = function () { return fetchJson('../api/gym/stats'); };
+  store.canLogBodyweight = false;          // private: bodyweight comes from the smart scale (Health Connect)
   store.workout = function (id) { return fetchJson('../api/gym/workouts?id=' + encodeURIComponent(id)); };
   // read the JSON even on 4xx, so the server's reason (e.g. Hevy imports are read-only) reaches the user
   function postWorkout(body) {
