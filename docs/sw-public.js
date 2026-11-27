@@ -8,7 +8,11 @@ var SHELL = ['./', 'index.html', 'config.js', 'body.js', 'character.js', 'gymcor
   'backup.js', 'pwa.js', 'exercises.json', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
+  // cache: 'reload' skips the browser's HTTP cache (GitHub Pages sets max-age=600), so a new version
+  // never gets stored as a mix of fresh and 10-minute-old files.
+  e.waitUntil(caches.open(CACHE).then(function (c) {
+    return c.addAll(SHELL.map(function (u) { return new Request(u, {cache: 'reload'}); }));
+  }).then(function () { return self.skipWaiting(); }));
 });
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (keys) {
