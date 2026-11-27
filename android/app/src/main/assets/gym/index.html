@@ -85,6 +85,8 @@ h1{font-size:30px;letter-spacing:-.02em;margin:8px 0 2px;font-weight:750}
 .wset input{width:0;flex:1;min-width:0;height:42px;margin:0;padding:0 10px;text-align:center}
 .wset span.u{color:var(--dim);font-size:13px;flex:none}
 .wadd{width:100%;height:38px;border-radius:12px;color:var(--volt);font-weight:700;font-size:14px}
+.wset select{flex:1.4;min-width:0;height:42px;margin:0;padding:0 28px 0 12px;-webkit-appearance:none;appearance:none;background:var(--card2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--text);border:1px solid var(--line);border-radius:12px;font-weight:700}
+.wset.wcd2{padding-left:32px}.wset.wcd2 input{padding:0 4px}
 .wro{color:var(--dim);font-size:14px;margin:0 4px 6px}
 .wkcard{background:var(--card);border-radius:20px;padding:16px;margin-bottom:10px}
 .wkstats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
@@ -547,6 +549,9 @@ function workoutEditor(id) {
   Store.workout(id).then(function (w) {
     var ex = w.exercises.map(function (e) { return {name: e.name, sets: e.sets.map(function (x) { return JSON.parse(JSON.stringify(x)); })}; });
     var ro = !w.editable;
+    function planCardio(name) { return !!(plan && plan.exercises || []).some(function (p) { return p.name === name && p.cardio; }); }
+    function isCardioEx(e) { return e.sets.some(function (x) { return x.type === 'cardio'; }) || (!e.sets.length && planCardio(e.name)); }
+    function newInterval(prev) { return {w: 0, r: 0, type: 'cardio', mode: (prev && prev.mode) || 'run', sec: 0, km: 0, kmh: (prev && prev.kmh) || 0, kcal: 0}; }
     openSheet('<h2 style="margin:0 0 2px;font-size:24px">' + (ro ? 'Workout' : 'Edit workout') + '</h2>' +
       '<p class="sub" style="margin-bottom:12px">' + esc(wDay(w)) + (w.duration_min ? ' \u00b7 ' + w.duration_min + ' min' : '') + '</p>' +
       (ro ? '<p class="wro">Imported from Hevy, so it\u2019s read-only here (the next Hevy export would overwrite any change).</p>'
@@ -559,9 +564,19 @@ function workoutEditor(id) {
         var n = 0;
         return '<div class="wex"><div class="wexh"><b>' + esc(e.name) + '</b>' + (ro ? '' : '<button data-a="dex" data-e="' + i + '" aria-label="Remove exercise">\u2715</button>') + '</div>' +
           e.sets.map(function (x, j) {
-            if (x.type === 'cardio') {          // cardio interval: shown as text, can be removed, kept on save
-              return '<div class="wset"><span class="sn">' + (++n) + '</span><span class="u" style="flex:1;color:var(--text)">' + esc(Cardio.setText(x, e.name)) + '</span>' +
-                (ro ? '' : '<button data-a="dset" data-e="' + i + '" data-s="' + j + '" aria-label="Remove interval">\u2715</button>') + '</div>';
+            if (x.type === 'cardio') {          // cardio interval: editable (mode, minutes, km, km/h, kcal)
+              if (ro) return '<div class="wset"><span class="sn">' + (++n) + '</span><span class="u" style="flex:1;color:var(--text)">' + esc(Cardio.setText(x, e.name)) + '</span></div>';
+              var at = ' data-e="' + i + '" data-s="' + j + '"', L = Cardio.labels(e.name);
+              var cin = function (k, v, unit, step, mode) {
+                return '<input class="txt num" type="number" inputmode="' + mode + '" step="' + step + '" min="0" placeholder="' + (k === 'kcal' ? 'auto' : '0') + '" data-k="' + k + '"' + at +
+                  ' value="' + (v > 0 ? v : '') + '" aria-label="' + unit + '"><span class="u">' + unit + '</span>';
+              };
+              return '<div class="wset"><span class="sn">' + (++n) + '</span>' +
+                '<select class="txt" data-k="mode"' + at + ' aria-label="Pace">' + ['jog', 'run', 'sprint'].map(function (m) {
+                  return '<option value="' + m + '"' + (x.mode === m ? ' selected' : '') + '>' + esc(L[m]) + '</option>'; }).join('') + '</select>' +
+                cin('min', x.sec > 0 ? Math.round(x.sec / 6) / 10 : 0, 'min', '0.5', 'decimal') +
+                '<button data-a="dset"' + at + ' aria-label="Remove interval">\u2715</button></div>' +
+                '<div class="wset wcd2">' + cin('km', x.km, 'km', '0.01', 'decimal') + cin('kmh', x.kmh, 'km/h', '0.1', 'decimal') + cin('kcal', x.kcal, 'kcal', '1', 'numeric') + '</div>';
             }
             var lab = x.type === 'warmup' ? '<span class="sn wu">W</span>' : '<span class="sn">' + (++n) + '</span>';
             if (ro) return '<div class="wset">' + lab + '<span class="u" style="flex:1;color:var(--text)">' + fmtW(x.w) + ' kg \u00d7 ' + x.r + '</span></div>';
@@ -569,7 +584,7 @@ function workoutEditor(id) {
               '<input class="txt num" type="number" inputmode="decimal" step="0.5" min="0" data-k="w" data-e="' + i + '" data-s="' + j + '" value="' + fmtW(x.w) + '"><span class="u">kg</span>' +
               '<input class="txt num" type="number" inputmode="numeric" min="0" data-k="r" data-e="' + i + '" data-s="' + j + '" value="' + x.r + '"><span class="u">reps</span>' +
               '<button data-a="dset" data-e="' + i + '" data-s="' + j + '" aria-label="Remove set">\u2715</button></div>';
-          }).join('') + (ro || e.sets.some(function (x) { return x.type === 'cardio'; }) ? '' : '<button class="wadd" data-a="aset" data-e="' + i + '">+ Add set</button>') + '</div>';
+          }).join('') + (ro ? '' : '<button class="wadd" data-a="aset" data-e="' + i + '">' + (isCardioEx(e) ? '+ Add interval' : '+ Add set') + '</button>') + '</div>';
       }).join('') || '<p class="wro">No sets left \u2014 add an exercise, or delete the workout.</p>';
     }
     draw();
@@ -578,14 +593,20 @@ function workoutEditor(id) {
     $('wBody').oninput = function (e) {
       var t = e.target, k = t.getAttribute('data-k'); if (!k) return;
       var x = ex[+t.getAttribute('data-e')].sets[+t.getAttribute('data-s')];
-      x[k] = parseFloat(t.value) || 0;
+      if (k === 'mode') x.mode = t.value;
+      else if (k === 'min') x.sec = Math.round((parseFloat(t.value) || 0) * 60);
+      else { x[k] = parseFloat(t.value) || 0; if (k === 'kcal') x.kcalSet = t.value !== ''; }
     };
+    $('wBody').onchange = $('wBody').oninput;          // <select> on older WebKit only fires change
     $('wBody').onclick = function (e) {
       var t = e.target.closest ? e.target.closest('[data-a]') : e.target, a = t && t.getAttribute('data-a'); if (!a) return;
       var i = +t.getAttribute('data-e'), j = +t.getAttribute('data-s');
       if (a === 'dex') ex.splice(i, 1);
       else if (a === 'dset') { ex[i].sets.splice(j, 1); if (!ex[i].sets.length) ex.splice(i, 1); }
-      else if (a === 'aset') { var last = ex[i].sets[ex[i].sets.length - 1] || {w: 20, r: 10}; ex[i].sets.push({w: last.w, r: last.r, type: 'normal'}); }
+      else if (a === 'aset') {
+        var last = ex[i].sets[ex[i].sets.length - 1] || {w: 20, r: 10};
+        ex[i].sets.push(isCardioEx(ex[i]) ? newInterval(last) : {w: last.w, r: last.r, type: 'normal'});
+      }
       buzz(); draw();
     };
     $('wSearch').oninput = function () {
@@ -593,13 +614,30 @@ function workoutEditor(id) {
       plan.exercises.filter(function (e) { return e.name.toLowerCase().indexOf(q) >= 0; }).slice(0, 10).forEach(function (e) {
         var b = document.createElement('button'); b.className = 'it';
         b.innerHTML = '<div><b>' + esc(e.name) + '</b><small>' + ((e.muscles || {}).primary || []).map(function (m) { return MN[m] || m; }).join(', ') + '</small></div>';
-        b.onclick = function () { var t0 = (e.target || [])[0] || {w: 20, r: 10}; ex.push({name: e.name, sets: [{w: t0.w, r: t0.r, type: 'normal'}]}); buzz(); $('wSearch').value = ''; $('wPick').innerHTML = ''; draw(); };
+        b.onclick = function () {
+          var t0 = (e.target || [])[0] || {w: 20, r: 10};
+          ex.push({name: e.name, sets: [e.cardio ? newInterval() : {w: t0.w, r: t0.r, type: 'normal'}]});
+          buzz(); $('wSearch').value = ''; $('wPick').innerHTML = ''; draw();
+        };
         $('wPick').appendChild(b);
       });
     };
     $('wSave').onclick = function () {
       var bad = ex.some(function (e) { return e.sets.some(function (x) { return x.type !== 'cardio' && (!(x.r > 0) || x.w < 0); }); });
       if (bad) { toast('Every set needs reps (remove empty ones)'); return; }
+      if (ex.some(function (e) { return e.sets.some(function (x) { return x.type === 'cardio' && !(x.sec > 0) && !(x.km > 0); }); })) {
+        toast('Every cardio interval needs minutes or distance'); return;
+      }
+      ex.forEach(function (e) {                      // fill what can be worked out: speed, distance, calories
+        e.sets.forEach(function (x) {
+          if (x.type !== 'cardio') return;
+          if (!(x.kmh > 0) && x.km > 0 && x.sec > 0) x.kmh = Math.round(x.km / (x.sec / 3600) * 10) / 10;
+          if (!(x.km > 0) && x.kmh > 0 && x.sec > 0) x.km = Math.round(x.kmh * x.sec / 36) / 100;
+          if (!(x.sec > 0) && x.km > 0 && x.kmh > 0) x.sec = Math.round(x.km / x.kmh * 3600);
+          if (!x.kcalSet && !(x.kcal > 0) && x.sec > 0) x.kcal = Cardio.kcal(e.name, x.mode, x.kmh, x.sec);
+          delete x.kcalSet;
+        });
+      });
       if (!ex.length) { toast('Nothing left \u2014 use Delete workout instead'); return; }
       Store.saveWorkout(id, {title: $('wTitle').value, exercises: ex}).then(function (j) {
         if (!j || !j.ok) { toast((j && j.error) || 'Could not save'); return; }

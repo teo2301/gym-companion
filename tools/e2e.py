@@ -263,12 +263,42 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
         problems.append("CSV lacks cardio distance/duration/notes")
     wk = page.evaluate("Store.workouts().then(function (l) { return Store.workout(l[0].id); })")
     page.evaluate("workoutEditor(%r)" % wk["id"]); page.wait_for_selector("#wSave", timeout=5000)
-    if "Sprint" not in page.inner_text("#wBody") or not page.locator("#wBenefits .hb").count():
+    if "sprint" not in page.eval_on_selector_all("#wBody select[data-k=mode]", "els => els.map(e => e.value)") or not page.locator("#wBenefits .hb").count():
         problems.append("workout editor doesn't show cardio intervals / benefits")
     page.click("#wSave"); page.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=5000)
     wk2 = page.evaluate("Store.workout(%r)" % wk["id"])
     if sum(1 for e in wk2["exercises"] for x in e["sets"] if x.get("type") == "cardio") != 2:
         problems.append("saving the edited workout dropped cardio intervals")
+
+    # ---- Editor: add a cardio machine to a past workout, fill minutes + distance, the rest is worked out
+    page.evaluate("workoutEditor(%r)" % wk["id"]); page.wait_for_selector("#wSave", timeout=5000)
+    page.fill("#wSearch", "rowing machine"); page.wait_for_selector("#wPick .it", timeout=5000); page.click("#wPick .it")
+    n_ex = page.evaluate("document.querySelectorAll('#wBody .wex').length")
+    page.fill("#wBody .wex:last-child input[data-k=min]", "20")
+    page.fill("#wBody .wex:last-child input[data-k=km]", "3")
+    page.select_option("#wBody .wex:last-child select[data-k=mode]", "jog")
+    page.click("#wBody .wex:last-child [data-a=aset]")          # + Add interval, left empty -> must be refused
+    if page.locator("#wBody .wex:last-child select[data-k=mode]").count() != 2:
+        problems.append("editor: + Add interval didn't add a cardio interval")
+    page.click("#wSave"); page.wait_for_timeout(400)
+    if not page.evaluate("document.getElementById('sheet').classList.contains('on')"):
+        problems.append("editor saved an empty cardio interval")
+    page.click("#wBody .wex:last-child .wset:nth-last-of-type(2) [data-a=dset]")
+    page.locator("#wBody .wex:last-child").screenshot(path=SHOTS / f"{tag}-8c-editor-cardio.png")
+    page.click("#wSave"); page.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=5000)
+    wk3 = page.evaluate("Store.workout(%r)" % wk["id"])
+    tm = [x for e in wk3["exercises"] if e["name"] == "Rowing Machine" for x in e["sets"]]
+    if len(tm) != 1 or tm[0].get("type") != "cardio" or tm[0].get("sec") != 1200 or tm[0].get("km") != 3 \
+            or tm[0].get("kmh") != 9 or not tm[0].get("kcal") or tm[0].get("mode") != "jog":
+        problems.append(f"editor cardio interval saved wrong: {tm}")
+    if len(wk3["exercises"]) != n_ex:
+        problems.append("editor lost or duplicated exercises when adding cardio")
+    page.evaluate("workoutEditor(%r)" % wk["id"]); page.wait_for_selector("#wSave", timeout=5000)
+    page.fill("#wBody .wex:last-child input[data-k=min]", "25"); page.fill("#wBody .wex:last-child input[data-k=kcal]", "")
+    page.click("#wSave"); page.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=5000)
+    tm2 = [x for e in page.evaluate("Store.workout(%r)" % wk["id"])["exercises"] if e["name"] == "Rowing Machine" for x in e["sets"]]
+    if not tm2 or tm2[0].get("sec") != 1500:
+        problems.append(f"editing a cardio interval's minutes didn't save: {tm2}")
 
     # ---- Photo character: a framed full-body picture (no background removal), shown on home, in backups; crafted backups can't inject
     page.click("#settingsBtn"); page.wait_for_selector("#charNew", timeout=5000); page.click("#charNew")
