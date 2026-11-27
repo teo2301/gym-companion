@@ -53,6 +53,12 @@ function styles() {
     '.pgbw{display:flex;gap:8px;margin-top:10px}.pgbw input{flex:1;margin:0;height:42px}.pgbw button{flex:none;height:42px;padding:0 16px;border-radius:12px;background:var(--volt);color:#0c0e12;font-weight:700}',
     '.pgopen{width:100%;height:48px;border-radius:16px;background:var(--card2);color:var(--text);font-weight:700;font-size:15px;margin-top:10px}',
     '.pgopen span{color:var(--volt)}',
+    /* photo evolution */
+    '.evo{position:relative;aspect-ratio:3/4;max-width:280px;margin:6px auto 8px;border-radius:16px;overflow:hidden;background:#0b0d11;box-shadow:inset 0 0 0 1px var(--line)}',
+    '.evo img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}',
+    '.evo input[type=range]{position:absolute;left:10px;right:10px;bottom:8px;width:calc(100% - 20px);margin:0;accent-color:var(--volt)}',
+    '.evl{position:absolute;top:8px;font-size:11px;font-weight:800;background:rgba(8,10,12,.82);padding:3px 7px;border-radius:8px}.evl.l{left:8px}.evl.r{right:8px}',
+    '.evosel{display:flex;gap:8px;margin:4px 0}.evosel select{flex:1;min-width:0;background:var(--card2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px;font-size:13px}',
     /* charts */
     '.cwrap{position:relative}.cwrap svg{display:block;overflow:visible;user-select:none;-webkit-user-select:none}',
     '.cax{fill:#8d94a0;font:11px system-ui,-apple-system,sans-serif}.clab{fill:#eef0f3;font:700 12px system-ui,-apple-system,sans-serif}',
@@ -106,6 +112,31 @@ function card(id, title, sub, extra) {
     (sub ? '<p class="pgsub">' + sub + '</p>' : '') + (extra || '') + '<div id="pg_' + id + '"></div><div class="pgnote" id="pgn_' + id + '"></div></div>';
 }
 
+/* Photos are optional and private: the slider compares any two saved photos. */
+function drawEvolution() {
+  var box = q('pg_evo');
+  if (!box || !window.GymPhoto) return;
+  window.GymPhoto.data().then(function (d) {
+    var ps = (d && d.photos) || [];
+    if (ps.length < 2) { box.innerHTML = '<p class="cempty">Add two photos in Settings → Character to see your evolution.</p>'; return; }
+    var opts = ps.map(function (p, i) { return '<option value="' + i + '">LV ' + p.lv + ' · ' + e(p.date) + '</option>'; }).join('');
+    box.innerHTML = '<div class="evosel"><select id="evoA">' + opts + '</select><select id="evoB">' + opts + '</select></div>' +
+      '<div class="evo"><img id="evoBase" alt="Earlier character"><img id="evoTop" alt="Later character">' +
+      '<span class="evl l" id="evoLA"></span><span class="evl r" id="evoRB"></span>' +
+      '<input type="range" id="evoRange" min="0" max="100" value="50" aria-label="Before and after"></div>';
+    q('evoB').selectedIndex = ps.length - 1;
+    function update() {
+      var a = ps[+q('evoA').value], b = ps[+q('evoB').value];
+      q('evoBase').src = a.img; q('evoTop').src = b.img;
+      q('evoTop').style.clipPath = 'inset(0 ' + (100 - (+q('evoRange').value)) + '% 0 0)';
+      q('evoLA').textContent = 'LV ' + a.lv + ' · ' + a.date;
+      q('evoRB').textContent = 'LV ' + b.lv + ' · ' + b.date;
+    }
+    ['evoA', 'evoB', 'evoRange'].forEach(function (id) { q(id).addEventListener('input', update); });
+    update();
+  }).catch(function () { box.innerHTML = '<p class="cempty">Photos unavailable.</p>'; });
+}
+
 function render() {
   if (!D) return;
   var st = D.stats, pr = D.prog, cut = cutoff();
@@ -133,12 +164,14 @@ function render() {
       return '<button data-m="' + m[0] + '" class="' + (m[0] === metric ? 'on' : '') + '">' + m[1] + '</button>'; }).join('') + '</div>');
   html += card('cal', 'Consistency', 'Each square is a day; brighter = more sets.');
   html += card('lvl', 'Lifter level', 'Your overall strength level (1–50), week by week.');
+  html += card('evo', 'Your evolution', 'Before / after photos — stored only on this device.');
   html += card('mus', 'Muscles trained', 'Average sets per week. Most people grow best with about 10–20 per muscle.');
   html += card('str', 'Strength by muscle', 'Your best lift for each muscle against bodyweight standards. Tap one for its chart.');
   html += card('bw', 'Bodyweight', null, '');
   html += '<div class="pgcard"><div class="pgch"><h3>Personal records</h3><span class="pgsub" style="margin:0">' + P.length + ' in this period</span></div><div id="pg_prs"></div></div>';
   html += '<div class="pgcard"><div class="pgch"><h3>Exercises</h3></div><input class="search" id="pgSearch" placeholder="Search your exercises…" autocomplete="off" style="margin:6px 0 4px"><div id="pg_ex"></div></div>';
   q('pgBody').innerHTML = html;
+  drawEvolution();
 
   /* training per week */
   var buckets = bucketize(W, cut);
@@ -348,5 +381,6 @@ window.GymBack = function () {
 };
 
 styles();          // the home-screen button uses these styles too
-window.Progress = {open: open, exercise: exerciseSheet};
+window.Progress = {open: open, exercise: exerciseSheet,
+  refreshEvolution: function () { if (D) drawEvolution(); }};
 })();

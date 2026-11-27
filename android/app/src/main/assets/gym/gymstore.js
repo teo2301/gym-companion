@@ -348,7 +348,12 @@ function makePublic(c) {
   function workoutJson(raw) {
     var n = core().normalizeSession(raw), exs = [], vol = 0, sets = 0;
     Object.keys(n.exercises).forEach(function (name) {
-      var ss = n.exercises[name].map(function (x) { vol += x.weight_kg * x.reps; sets++; return {w: x.weight_kg, r: x.reps, type: x.set_type === 'warmup' ? 'warmup' : 'normal'}; });
+      var ss = n.exercises[name].map(function (x) {
+        sets++;
+        if (x.mode || (x.reps <= 0 && (x.distance_km > 0 || x.duration_seconds > 0)))     // cardio interval
+          return {w: 0, r: 0, type: 'cardio', sec: x.duration_seconds || 0, km: x.distance_km || 0, kmh: x.kmh || 0, kcal: x.kcal || 0, mode: x.mode || 'run'};
+        vol += x.weight_kg * x.reps; return {w: x.weight_kg, r: x.reps, type: x.set_type === 'warmup' ? 'warmup' : 'normal'};
+      });
       // warm-ups first, as they were done
       ss.sort(function (a, b) { return (a.type === 'warmup' ? 0 : 1) - (b.type === 'warmup' ? 0 : 1); });
       if (ss.length) exs.push({name: name, sets: ss});   // routine exercises that were never done aren't part of it
@@ -377,9 +382,14 @@ function makePublic(c) {
       asArray(edit && edit.exercises).forEach(function (e) {
         var name = String((e && e.name) || '').trim().slice(0, 80); if (!name) return;
         var sets = asArray(e.sets).map(function (x, i) {
+          if (x.type === 'cardio') {                    // keep cardio intervals (same bounds as the live op)
+            var c = core().cardioEntry(x, 0);
+            return {weight_kg: 0, reps: 0, set_type: 'normal', set_index: i, distance_km: c.km, duration_seconds: c.sec,
+              kmh: c.kmh, kcal: c.kcal, mode: c.mode, keep: c.sec > 0 || c.km > 0};
+          }
           return {weight_kg: Math.max(0, Math.min(1000, num(x.w))), reps: Math.max(0, Math.min(1000, Math.round(num(x.r)))),
-            set_type: x.type === 'warmup' ? 'warmup' : 'normal', set_index: i};
-        }).filter(function (x) { return x.reps > 0; });
+            set_type: x.type === 'warmup' ? 'warmup' : 'normal', set_index: i, keep: Math.round(num(x.r)) > 0};
+        }).filter(function (x) { var k = x.keep; delete x.keep; return k; });
         if (sets.length) { ex[name] = (ex[name] || []).concat(sets); any = true; }
       });
       if (!any) return {ok: false, error: 'A workout needs at least one set \u2014 delete it instead'};

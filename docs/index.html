@@ -317,6 +317,18 @@ textarea.txt{min-height:96px;resize:none}
 .tones{display:flex;gap:10px;margin:6px 0 14px;flex-wrap:wrap}
 .tones button{width:40px;height:40px;border-radius:50%;border:2px solid var(--line);box-shadow:inset 0 -6px 10px rgba(0,0,0,.18);transition:transform .15s var(--spring)}
 .tones button.on{border-color:var(--volt);transform:scale(1.12);box-shadow:0 0 0 3px var(--voltglow),inset 0 -6px 10px rgba(0,0,0,.18)}
+/* photo character: tier-coloured frame around the cropped photo */
+.char-photo{position:relative;width:100%;aspect-ratio:3/4;border-radius:16px;overflow:hidden;background:linear-gradient(160deg,var(--card2),var(--card));box-shadow:0 0 0 2px var(--tier),0 0 30px -8px var(--tier);animation:charbreathe 4s ease-in-out infinite}
+.char-photo img{width:100%;height:100%;object-fit:contain;display:block;filter:drop-shadow(0 8px 10px rgba(0,0,0,.5))}
+.char-photo .char-badge{position:absolute;left:8px;bottom:8px;padding:4px 9px;border-radius:999px;background:rgba(8,10,12,.78);border:1px solid var(--tier);font-size:12px;font-weight:900;letter-spacing:.08em}
+.char-photo .char-badge b{color:var(--tier);font-size:16px}
+@keyframes charbreathe{0%,100%{transform:scale(1)}50%{transform:scale(1.015)}}
+.char-row{display:flex;gap:8px;margin:8px 0 12px;flex-wrap:wrap}
+.char-row button{flex:1;min-width:88px;padding:10px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:var(--text);font-weight:800;font-size:13px}
+.char-row button.on{border-color:var(--volt);background:rgba(215,255,62,.12);color:var(--volt)}
+.char-crop{position:relative;width:100%;aspect-ratio:3/4;border:2px dashed var(--volt);border-radius:16px;overflow:hidden;background:#05070a;margin:10px 0}
+.char-crop canvas{width:100%;height:100%;display:block;touch-action:none}
+.char-crop .ghost{position:absolute;inset:8px;border:1px solid rgba(255,255,255,.18);border-radius:12px;pointer-events:none}
 </style></head>
 <body>
 <div class="glow"></div>
@@ -332,6 +344,7 @@ textarea.txt{min-height:96px;resize:none}
   <div id="heroBox"><div class="skel" style="height:190px"></div></div>
   <div id="weekSec" style="display:none"><div class="labelrow"><div class="label">Your weeks</div></div><div class="wkcard" id="weekCard"></div></div>
   <button class="pgopen" id="openProg">📈 <span>Progress &amp; charts</span></button>
+  <button class="pgopen" id="openCardio">🏃 <span>Quick cardio</span></button>
   <div id="socialSec" style="display:none"><div class="labelrow"><div class="label">Friends</div></div><div id="socialBox"></div></div>
   <div class="labelrow"><div class="label">Your body</div>
     <div class="seg" id="bodySeg"><button data-m="week" class="on">This week</button><button data-m="rec">Recovery</button><button data-m="str">Strength</button></div></div>
@@ -383,6 +396,7 @@ textarea.txt{min-height:96px;resize:none}
   <p class="sub" id="sSub"></p>
   <div class="big" id="sStats" style="text-align:left"></div>
   <div id="sPrs" style="text-align:left;margin-top:16px"></div>
+  <div id="sBenefits"></div>
   <div class="tools" style="max-width:380px;margin:16px auto 0"><button id="summaryBackup">↓ Back up</button><button id="summaryCsv">↓ CSV</button></div>
   <button class="finish" id="doneShare" style="display:none">📸 Share with friends</button>
   <button class="finish" id="doneEdit">✎ Edit this workout</button>
@@ -408,6 +422,7 @@ textarea.txt{min-height:96px;resize:none}
 <script src="config.js"></script>
 <script src="body.js"></script>
 <script src="character.js"></script>
+<script src="photo.js"></script>
 <script src="gymcore.js"></script>
 <script src="gymstore.js"></script>
 <script src="backup.js"></script>
@@ -415,6 +430,7 @@ textarea.txt{min-height:96px;resize:none}
 <script src="social.js"></script>
 <script src="charts.js"></script>
 <script src="progress.js"></script>
+<script src="cardio.js"></script>
 
 <script>
 'use strict';
@@ -529,13 +545,13 @@ function workoutsSheet() {
 $('allWorkouts').onclick = function () { buzz(); workoutsSheet(); };
 function workoutEditor(id) {
   Store.workout(id).then(function (w) {
-    var ex = w.exercises.map(function (e) { return {name: e.name, sets: e.sets.map(function (x) { return {w: x.w, r: x.r, type: x.type}; })}; });
+    var ex = w.exercises.map(function (e) { return {name: e.name, sets: e.sets.map(function (x) { return JSON.parse(JSON.stringify(x)); })}; });
     var ro = !w.editable;
     openSheet('<h2 style="margin:0 0 2px;font-size:24px">' + (ro ? 'Workout' : 'Edit workout') + '</h2>' +
       '<p class="sub" style="margin-bottom:12px">' + esc(wDay(w)) + (w.duration_min ? ' \u00b7 ' + w.duration_min + ' min' : '') + '</p>' +
       (ro ? '<p class="wro">Imported from Hevy, so it\u2019s read-only here (the next Hevy export would overwrite any change).</p>'
           : '<input class="txt" id="wTitle" value="' + esc(w.title) + '" placeholder="Workout name" autocomplete="off">') +
-      '<div id="wBody"></div>' +
+      '<div id="wBody"></div><div id="wBenefits"></div>' +
       (ro ? '' : '<input class="search" id="wSearch" placeholder="+ Add exercise (search)\u2026" autocomplete="off" style="margin-top:4px"><div class="list" id="wPick"></div>' +
         '<button class="log" id="wSave" style="margin-top:8px">Save changes</button><button class="danger" id="wDel">Delete workout</button>'));
     function draw() {
@@ -543,16 +559,21 @@ function workoutEditor(id) {
         var n = 0;
         return '<div class="wex"><div class="wexh"><b>' + esc(e.name) + '</b>' + (ro ? '' : '<button data-a="dex" data-e="' + i + '" aria-label="Remove exercise">\u2715</button>') + '</div>' +
           e.sets.map(function (x, j) {
+            if (x.type === 'cardio') {          // cardio interval: shown as text, can be removed, kept on save
+              return '<div class="wset"><span class="sn">' + (++n) + '</span><span class="u" style="flex:1;color:var(--text)">' + esc(Cardio.setText(x, e.name)) + '</span>' +
+                (ro ? '' : '<button data-a="dset" data-e="' + i + '" data-s="' + j + '" aria-label="Remove interval">\u2715</button>') + '</div>';
+            }
             var lab = x.type === 'warmup' ? '<span class="sn wu">W</span>' : '<span class="sn">' + (++n) + '</span>';
             if (ro) return '<div class="wset">' + lab + '<span class="u" style="flex:1;color:var(--text)">' + fmtW(x.w) + ' kg \u00d7 ' + x.r + '</span></div>';
             return '<div class="wset">' + lab +
               '<input class="txt num" type="number" inputmode="decimal" step="0.5" min="0" data-k="w" data-e="' + i + '" data-s="' + j + '" value="' + fmtW(x.w) + '"><span class="u">kg</span>' +
               '<input class="txt num" type="number" inputmode="numeric" min="0" data-k="r" data-e="' + i + '" data-s="' + j + '" value="' + x.r + '"><span class="u">reps</span>' +
               '<button data-a="dset" data-e="' + i + '" data-s="' + j + '" aria-label="Remove set">\u2715</button></div>';
-          }).join('') + (ro ? '' : '<button class="wadd" data-a="aset" data-e="' + i + '">+ Add set</button>') + '</div>';
+          }).join('') + (ro || e.sets.some(function (x) { return x.type === 'cardio'; }) ? '' : '<button class="wadd" data-a="aset" data-e="' + i + '">+ Add set</button>') + '</div>';
       }).join('') || '<p class="wro">No sets left \u2014 add an exercise, or delete the workout.</p>';
     }
     draw();
+    if (window.Cardio) $('wBenefits').innerHTML = Cardio.card(Cardio.analyze({exercises: w.exercises, minutes: w.duration_min, prs: []}, Cardio.ctx()));
     if (ro) return;
     $('wBody').oninput = function (e) {
       var t = e.target, k = t.getAttribute('data-k'); if (!k) return;
@@ -577,7 +598,7 @@ function workoutEditor(id) {
       });
     };
     $('wSave').onclick = function () {
-      var bad = ex.some(function (e) { return e.sets.some(function (x) { return !(x.r > 0) || x.w < 0; }); });
+      var bad = ex.some(function (e) { return e.sets.some(function (x) { return x.type !== 'cardio' && (!(x.r > 0) || x.w < 0); }); });
       if (bad) { toast('Every set needs reps (remove empty ones)'); return; }
       if (!ex.length) { toast('Nothing left \u2014 use Delete workout instead'); return; }
       Store.saveWorkout(id, {title: $('wTitle').value, exercises: ex}).then(function (j) {
@@ -672,6 +693,24 @@ function preview(r) {
   $('pStart').onclick = function () { buzz(15); closeSheet(); start(r.name); };
   $('pEdit').onclick = function () { buzz(); editor(r); };
 }
+/* Quick cardio: start a cardio workout on a machine, or add it to the workout that's running */
+function cardioSheet() {
+  var machines = (plan && plan.exercises || []).filter(function (x) { return x.cardio; });
+  if (!machines.length) { toast('Loading\u2026 try again in a second'); return; }
+  openSheet('<h2 style="margin:0 0 4px;font-size:24px">Cardio</h2><p class="sub" style="margin-bottom:12px">' +
+    (live && !live.finished ? 'Adds it to your current workout.' : 'Starts a cardio workout. Add weights too if you like.') + '</p><div class="list" id="cdPick"></div>');
+  machines.forEach(function (x) {
+    var b = document.createElement('button'); b.className = 'it';
+    b.innerHTML = '<div><b>' + esc(x.name) + '</b><small>Timer \u00b7 speed \u00b7 distance \u00b7 calories</small></div>';
+    b.onclick = function () {
+      buzz(); closeSheet();
+      var info = JSON.parse(JSON.stringify(x)); info.done = [];
+      (live && !live.finished ? op({op: 'add_ex', name: x.name}) : op({op: 'start', routine: 'Cardio', exercises: [info]}))
+        .then(function () { show('work'); }).catch(function () { toast('Offline \u2014 try again'); });
+    };
+    $('cdPick').appendChild(b);
+  });
+}
 function start(name) { op({op: 'start', routine: name}).then(function () { show('work'); }).catch(function () { toast('Offline — try again'); }); }
 
 /* ---------- workout */
@@ -695,12 +734,19 @@ function render() {
   }
   $('exGrp').textContent = ex.group || '';
   $('exName').textContent = ex.name;
-  $('exLast').textContent = ex.last && ex.last.length ? 'Last time: ' + setsTxt(ex.last) : 'First time logging this';
-  $('exWhy').textContent = '↗ ' + (ex.why || 'target');
+  $('exLast').textContent = ex.cardio ? 'Cardio \u00b7 timer, speed, distance and calories' :
+    ex.last && ex.last.length ? 'Last time: ' + setsTxt(ex.last) : 'First time logging this';
+  $('exWhy').textContent = ex.cardio ? '' : '↗ ' + (ex.why || 'target');
+  var stepRow = document.querySelector('#exCard .steppers');
   var mu = ex.muscles || {primary: [], secondary: []};
   $('exChips').innerHTML = mu.primary.map(function (m) { return '<span class="chip">' + esc(mname(m)) + '</span>'; }).join('') +
     mu.secondary.map(function (m) { return '<span class="chip s">' + esc(mname(m)) + '</span>'; }).join('');
   $('exNote').innerHTML = ex.note ? '<div class="note">' + esc(ex.note) + '</div>' : '';
+  if (ex.cardio && window.Cardio) {                 // cardio: timer panel instead of kg/reps steppers
+    stepRow.style.display = 'none'; Cardio.render(ex, idx);
+  } else {
+  if (window.Cardio) Cardio.hide();
+  stepRow.style.display = ''; $('logBtn').textContent = 'Log set';
   var tg = ex.target || [], total = Math.max(tg.length, ex.done.length + 1), html = '';
   var wu = ex.warmup || [], wd = ex.warm_done || [];
   if (wu.length && !ex.done.length) {
@@ -732,6 +778,7 @@ function render() {
   });
   var u = $('exSets').querySelector('[data-undo]');
   if (u) u.onclick = function () { buzz(); op({op: 'undo', ex: idx}); };
+  }
   // progress + list
   var doneSets = 0, allSets = 0;
   var list = $('exList'); list.innerHTML = '';
@@ -743,7 +790,9 @@ function render() {
     b.innerHTML = '<svg class="ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15" fill="none" stroke="#2a303a" stroke-width="3.5"/>' +
       '<circle cx="18" cy="18" r="15" fill="none" stroke="' + (f >= 1 ? '#3ee08f' : '#d7ff3e') + '" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="94.2" stroke-dashoffset="' +
       (94.2 * (1 - f)) + '" transform="rotate(-90 18 18)" style="transition:stroke-dashoffset .6s"/></svg>' +
-      '<div><b>' + esc(e.name) + '</b><small class="num">' + e.done.length + '/' + tl + ' sets · ' + setsTxt(e.target || []) + '</small></div>';
+      '<div><b>' + esc(e.name) + '</b><small class="num">' + (e.cardio ? e.done.length + (e.done.length === 1 ? ' interval' : ' intervals') +
+        (e.done.length ? ' · ' + Cardio.mmss(e.done.reduce(function (a, d) { return a + (d.sec || 0); }, 0)) : '') :
+        e.done.length + '/' + tl + ' sets · ' + setsTxt(e.target || [])) + '</small></div>';
     b.onclick = function () { buzz(); op({op: 'select', ex: j}); window.scrollTo(0, 0); $('work').scrollTo({top: 0, behavior: 'smooth'}); };
     list.appendChild(b);
   });
@@ -775,6 +824,7 @@ stepper('rPlus', function () { draft.r = Math.min(100, draft.r + 1); showDraft()
 stepper('rMinus', function () { draft.r = Math.max(0, draft.r - 1); showDraft(); });
 
 $('logBtn').addEventListener('click', function (e) {
+  if (window.Cardio && Cardio.logInterval()) return;        // cardio exercise: logs an interval instead
   var b = $('logBtn'), r = document.createElement('span'), rect = b.getBoundingClientRect(), s = Math.max(rect.width, rect.height);
   r.className = 'rip'; r.style.width = r.style.height = s + 'px';
   r.style.left = (e.clientX - rect.left - s / 2) + 'px'; r.style.top = (e.clientY - rect.top - s / 2) + 'px';
@@ -891,7 +941,9 @@ function renderSummary() {
   var stats = [
     ['Time', s.minutes, ' min'], ['Volume', s.volume, ' kg', dv === null ? '' : (dv >= 0 ? '▲ ' : '▼ ') + Math.abs(dv) + '% vs last', dv !== null && dv < 0],
     ['Sets', s.sets, ''], ['PRs', (s.prs || []).length, '']];
+  if (s.cardio) stats.push(['Cardio', s.cardio.minutes, ' min'], ['Burned', s.cardio.kcal, ' kcal']);
   if (s.hr_avg) stats.push(['Avg HR', s.hr_avg, ' bpm'], ['Max HR', s.hr_max, ' bpm']);
+  if (window.Cardio) $('sBenefits').innerHTML = Cardio.card(Cardio.analyze(Cardio.fromLive(live), Cardio.ctx()));
   $('sStats').innerHTML = stats.map(function (t, i) {
     return '<div class="stat" style="animation-delay:' + (300 + i * 90) + 'ms"><div class="k">' + t[0] + '</div><div class="v num" data-to="' + (t[1] || 0) + '" data-u="' + t[2] + '">0' + t[2] + '</div>' +
       (t[3] ? '<div class="d' + (t[4] ? ' neg' : '') + '">' + t[3] + '</div>' : '') + '</div>';
@@ -1216,7 +1268,8 @@ function renderLifter(score, lv, label) {
   if (!prog) return;
   var o = prog.overall, sc = score === undefined ? o.score : score, L = lv || o.lv;
   var ti = sc < 0 ? -1 : Math.min(4, Math.floor(sc)), tier = ti < 0 ? 'Untrained' : prog.levels[ti];
-  $('lifterFig').innerHTML = Lifter.svg(sc);
+  if (window.GymPhoto) GymPhoto.render($('lifterFig'), sc, L, TIER_COL[Math.max(0, ti)]);
+  else $('lifterFig').innerHTML = Lifter.svg(sc);
   $('lvNum').textContent = L;
   $('lvTier').textContent = tier;
   $('lvTier').style.color = ti < 0 ? '#8d94a0' : TIER_COL[ti];
@@ -1260,7 +1313,8 @@ function checkLevelUp() {
 }
 function levelUp(a, b) {
   var o = $('lvup');
-  $('lvupFig').innerHTML = Lifter.svg(prog.overall.score, {cls: 'flex'});
+  if (window.GymPhoto) GymPhoto.render($('lvupFig'), prog.overall.score, b, TIER_COL[Math.max(0, Math.floor(prog.overall.score))], {cls: 'flex'});
+  else $('lvupFig').innerHTML = Lifter.svg(prog.overall.score, {cls: 'flex'});
   $('lvupTxt').innerHTML = 'Lv ' + a + ' → <b>Lv ' + b + '</b>';
   $('lvupSub').textContent = prog.overall.tier;
   o.classList.add('on'); buzz([40, 60, 40, 60, 120]); confetti();
@@ -1349,16 +1403,111 @@ function onboardSheet() {
   };
   $('onSkip').onclick = function () { Store.set('onboarded', true).then(closeSheet); };
 }
+/* ---------- photo character ---------------------------------------------------------------- */
+function charRow() {
+  return '<h3 style="margin:16px 0 0;font-size:15px">Character</h3>' +
+    '<div class="char-row" id="charChoice">' +
+    '<button data-char="cartoon">Cartoon</button>' +
+    '<button data-char="photo">My photo</button>' +
+    '<button id="charNew">+ New photo</button></div>' +
+    '<p class="sub" id="charHint" style="margin:0 0 10px;font-size:12.5px"></p>';
+}
+function wireCharRow() {
+  var btns = document.querySelectorAll('#charChoice [data-char]');
+  GymPhoto.data().then(function (d) {
+    var p = GymPhoto.current(d);
+    $('charHint').textContent = p ? 'Photo from ' + p.date + ' · LV ' + p.lv + '. Stays on this device.' : 'No photo yet — take or choose a full-body picture.';
+    Array.prototype.forEach.call(btns, function (b) { b.classList.toggle('on', b.getAttribute('data-char') === d.mode); });
+  }).catch(function () {});
+  Array.prototype.forEach.call(btns, function (b) {
+    b.onclick = function () {
+      var want = b.getAttribute('data-char');
+      (want === 'photo' ? GymPhoto.usePhoto() : GymPhoto.useCartoon()).then(function () {
+        renderLifter(); wireCharRow(); toastOk(want === 'photo' ? 'Showing your photo' : 'Showing your cartoon');
+      }).catch(function () { toast('Could not change character'); });
+    };
+  });
+  $('charNew').onclick = photoSheet;
+}
+function photoSheet() {
+  openSheet('<h2 style="margin:0 0 4px;font-size:24px">My photo</h2>' +
+    '<p class="sub" style="margin-bottom:8px">A full-body picture works best. Drag to move, use + / − to zoom inside the frame.</p>' +
+    '<input type="file" accept="image/*" id="phFile" hidden>' +
+    '<div class="char-crop" id="phCrop"><canvas id="phCanvas"></canvas><div class="ghost"></div></div>' +
+    '<div class="char-row" style="margin:4px 0"><button class="ghost" id="phZoomOut">−</button><button class="ghost" id="phZoomIn">+</button></div>' +
+    '<p class="sub" id="phMsg" style="min-height:18px">Choose a photo to start.</p>' +
+    '<button class="log" id="phPick">Take / choose photo</button>' +
+    '<button class="finish" id="phSave" disabled>Save photo</button>' +
+    '<button class="danger" id="phCancel">Cancel</button>');
+  var view = {scale: 1, x: 0, y: 0}, file = null, bmp = null, saveEnabled = false;
+  var canvas = $('phCanvas'), ctx = canvas.getContext('2d');
+  function wh(b) { return [b.width || b.naturalWidth, b.height || b.naturalHeight]; }
+  function draw() {
+    canvas.width = GymPhoto.FRAME_W; canvas.height = GymPhoto.FRAME_H;
+    ctx.fillStyle = '#0c0e12'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!bmp) return;
+    var s = wh(bmp), k = view.scale * Math.max(canvas.width / s[0], canvas.height / s[1]);
+    var w = s[0] * k, h = s[1] * k;
+    ctx.drawImage(bmp, (canvas.width - w) / 2 + view.x * canvas.width / 2,
+      (canvas.height - h) / 2 + view.y * canvas.height / 2, w, h);
+  }
+  function zoom(mult) { view.scale = Math.max(1, Math.min(4, view.scale * mult)); draw(); }
+  $('phPick').onclick = function () { $('phFile').click(); };
+  $('phZoomIn').onclick = function () { zoom(1.2); };
+  $('phZoomOut').onclick = function () { zoom(1 / 1.2); };
+  $('phCancel').onclick = closeSheet;
+  $('phFile').onchange = function () {
+    file = $('phFile').files && $('phFile').files[0];
+    if (!file) return;
+    $('phMsg').textContent = 'Loading photo…';
+    if (typeof createImageBitmap === 'function') {
+      createImageBitmap(file, {imageOrientation: 'from-image'}).then(function (b) { bmp = b; ready(); })
+        .catch(function () { createImageBitmap(file).then(function (b) { bmp = b; ready(); }).catch(failed); });
+    } else {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () { bmp = img; URL.revokeObjectURL(url); ready(); };
+      img.onerror = function () { URL.revokeObjectURL(url); failed(); };
+      img.src = url;
+    }
+  };
+  function failed() { $('phMsg').textContent = 'Could not read that image. Try another photo.'; }
+  function ready() {
+    draw(); saveEnabled = true; $('phSave').disabled = false;
+    $('phMsg').textContent = 'Ready — your photo stays on this device.';
+  }
+  var drag = null;
+  canvas.addEventListener('pointerdown', function (e) { drag = {x: e.clientX, y: e.clientY, vx: view.x, vy: view.y}; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!drag || !bmp) return;
+    view.x = Math.max(-1, Math.min(1, drag.vx + 2 * (e.clientX - drag.x) / canvas.clientWidth));
+    view.y = Math.max(-1, Math.min(1, drag.vy + 2 * (e.clientY - drag.y) / canvas.clientHeight));
+    draw();
+  });
+  canvas.addEventListener('pointerup', function () { drag = null; });
+  canvas.addEventListener('pointercancel', function () { drag = null; });
+  $('phSave').onclick = function () {
+    if (!file || !saveEnabled) return;
+    saveEnabled = false; $('phSave').disabled = true; $('phMsg').textContent = 'Saving your photo…';
+    GymPhoto.frame(file, view).then(function (r) {
+      var o = prog && prog.overall ? prog.overall : {};
+      return GymPhoto.savePhoto(r.img, {lv: o.lv || 1, score: o.score || 0});
+    }).then(function () {
+      closeSheet(); renderLifter(); if (window.Progress) Progress.refreshEvolution();
+      toastOk('Saved — your photo stays on this device');
+    }).catch(function () { $('phMsg').textContent = 'Could not save — please try again.'; saveEnabled = true; $('phSave').disabled = false; });
+  };
+}
+
 function settingsSheet() {
   openSheet('<h2 style="margin:0 0 4px;font-size:24px">Settings & backup</h2>' +
     '<p class="sub" style="margin-bottom:12px">' + (IS_PUBLIC ? 'All data stays on this phone. Back up before changing device.' : 'Your data lives on your private server. Download a copy anytime.') + '</p>' +
-    toneRow() +
+    toneRow() + charRow() +
     '<button class="log" id="setBackup" style="margin-top:4px">↓ Download backup (JSON)</button>' +
     '<button class="finish" id="setCsv">↓ Download workouts (CSV)</button>' +
     (IS_PUBLIC ? '<button class="finish" id="setRestore">↑ Restore a backup</button>' +
       '<button class="danger" id="setOnboard">Set starting level again</button>' : '') +
     '<p class="sub" style="margin:14px 0 0;font-size:12.5px">Backups contain health data — store the file securely.</p>');
-  wireToneRow();
+  wireToneRow(); wireCharRow();
   $('setBackup').onclick = function () { Backup.exportJson(); };
   $('setCsv').onclick = function () { Backup.exportCsv(); };
   if (IS_PUBLIC) {
@@ -1384,6 +1533,7 @@ GymStore.create({}).then(function (s) {
   Store = s; IS_PUBLIC = Store.mode === 'public'; window.Store = Store; window.IS_PUBLIC = IS_PUBLIC;
   if (window.Backup) Backup.init(Store);
   $('openProg').onclick = function () { buzz(); Progress.open(); };
+  $('openCardio').onclick = function () { buzz(); cardioSheet(); };
   if (window.Social) {
     Social.init();
     $('doneShare').style.display = Social.enabled() ? '' : 'none';

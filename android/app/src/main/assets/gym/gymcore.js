@@ -309,12 +309,14 @@ function customMap(custom) {
 }
 // Preset exercise library (exercises.json), loaded by the store. Checked after EXACT and before the
 // keyword RULES, same order as gym_muscles.muscles_for.
-var PRESETS = {}, PRESET_NAMES = [];
+var PRESETS = {}, PRESET_NAMES = [], CARDIO = {};
+function isCardio(name) { return has(CARDIO, name); }
 function setPresets(list) {
-  PRESETS = {}; PRESET_NAMES = [];
+  PRESETS = {}; PRESET_NAMES = []; CARDIO = {};
   asArray(list).forEach(function (x) {
     if (!x || !x.name || !asArray(x.primary).length) return;
     PRESETS[x.name] = {primary: asArray(x.primary).slice(), secondary: asArray(x.secondary).slice(), equipment: x.equipment || ''};
+    if (x.cardio) CARDIO[x.name] = 1;
     PRESET_NAMES.push(x.name);
   });
   return PRESET_NAMES.length;
@@ -504,11 +506,13 @@ function canonSets(raw, warmDone, warmList) {
   var out = [], i, x;
   for (i = 0; i < asArray(raw).length; i++) {
     x = raw[i];
-    out.push({weight_kg: setW(x), reps: setR(x), set_type: x.set_type || 'normal',
-      distance_km: num(has(x, 'distance_km') ? x.distance_km : 0),
+    var cs = {weight_kg: setW(x), reps: setR(x), set_type: x.set_type || 'normal',
+      distance_km: num(has(x, 'distance_km') ? x.distance_km : x.km),
       set_index: has(x, 'set_index') ? num(x.set_index) : i,
-      duration_seconds: num(x.duration_seconds), rpe: has(x, 'rpe') ? x.rpe : null,
-      t: x.t || null, pr: x.pr || null});
+      duration_seconds: num(has(x, 'duration_seconds') ? x.duration_seconds : x.sec), rpe: has(x, 'rpe') ? x.rpe : null,
+      t: x.t || null, pr: x.pr || null};
+    if (isCardioSet(x)) { cs.mode = x.mode; cs.kmh = num(x.kmh); cs.kcal = num(x.kcal); }
+    out.push(cs);
   }
   var wd = asArray(warmDone).slice().sort(function (a, b) { return a - b; });
   for (i = 0; i < wd.length; i++) {
@@ -760,7 +764,8 @@ function buildPlan(opts) {
       }
     }
   }
-  function exInfo(n) {
+  function exInfo(n) { var info = exInfo0(n); return isCardio(n) ? cardioInfo(info) : info; }
+  function exInfo0(n) {
     var last = lastBy[n] || {date: null, sets: []}, st = step(n);
     tr = target(n, last.sets, st); tg = asArray(tr);
     var why = tr.why || '';
@@ -820,6 +825,34 @@ function buildPlan(opts) {
 
 /* ---------- live-session operations ---------- */
 
+/* ---------- cardio (mirrors gym_api: _cardio_entry, _cardio_summary, _cardio_notes) */
+var CARDIO_MODES = ['sprint', 'jog', 'run'];
+function clampN(v, lo, hi) { v = parseFloat(v); return isFinite(v) ? Math.max(lo, Math.min(hi, v)) : lo; }
+function cardioEntry(o, t) {
+  o = o || {};
+  return {w: 0, r: 0, t: t, pr: null, sec: pyRound(clampN(o.sec, 0, 36000)),
+    km: pyRound(clampN(o.km, 0, 200) * 100) / 100, kmh: pyRound(clampN(o.kmh, 0, 60) * 10) / 10,
+    kcal: pyRound(clampN(o.kcal, 0, 5000)), mode: CARDIO_MODES.indexOf(o.mode) >= 0 ? o.mode : 'run'};
+}
+function isCardioSet(d) { return !!d && CARDIO_MODES.indexOf(d.mode) >= 0; }
+function cardioSummary(exs) {
+  var ints = [], names = [], modes = {};
+  asArray(exs).forEach(function (e) {
+    asArray(e.done).forEach(function (d) { if (isCardioSet(d)) { ints.push(d); if (names.indexOf(e.name) < 0) names.push(e.name); modes[d.mode] = 1; } });
+  });
+  if (!ints.length) return null;
+  var sec = ints.reduce(function (a, d) { return a + d.sec; }, 0);
+  return {intervals: ints.length, seconds: sec, minutes: pyRound(sec / 60),
+    km: pyRound(ints.reduce(function (a, d) { return a + d.km; }, 0) * 100) / 100,
+    kcal: ints.reduce(function (a, d) { return a + d.kcal; }, 0), modes: Object.keys(modes).sort(), exercises: names};
+}
+function fmtG(x) { return String(Math.round(num(x) * 1e6) / 1e6); }      // like Python "%g" for these values
+function cardioNotes(d) { return 'mode=' + d.mode + '; speed=' + fmtG(d.kmh) + ' km/h; kcal=' + d.kcal; }
+function cardioInfo(info) {
+  var c = clone(info); c.cardio = true; c.target = []; c.warmup = []; c.why = 'cardio'; c.step = 0; c.last = [];
+  return c;
+}
+
 function summary(s) {
   s = s || {};
   var sets = [], i, j, e, d, hr = s.hr_log || [], end = num(s.ended != null ? s.ended : s.end, Date.now());
@@ -827,13 +860,14 @@ function summary(s) {
     for (i = 0; i < s.exercises.length; i++) {
       e = s.exercises[i];
       for (j = 0; j < asArray(e.done).length; j++) {
-        d = e.done[j]; sets.push({ex: e.name, w: num(d.w), r: num(d.r), pr: d.pr || null});
+        d = e.done[j]; if (isCardioSet(d)) continue;          // strength sets only
+        sets.push({ex: e.name, w: num(d.w), r: num(d.r), pr: d.pr || null});
       }
     }
   } else {
     Object.keys(s.exercises || {}).forEach(function (name) {
       asArray(s.exercises[name]).forEach(function (d) {
-        if (d.set_type === 'warmup') return;
+        if (d.set_type === 'warmup' || isCardioSet(d)) return;
         sets.push({ex: name, w: setW(d), r: setR(d), pr: d.pr || null});
       });
     });
@@ -846,7 +880,9 @@ function summary(s) {
     hr_avg: hr.length ? rnd(hr.reduce(function (a, b) { return a + num(b); }, 0) / hr.length) : null,
     hr_max: hr.length ? Math.max.apply(null, hr.map(num)) : null,
     exercises_done: Array.isArray(s.exercises) ? s.exercises.filter(function (e) { return asArray(e.done).length > 0; }).length :
-      Object.keys(s.exercises || {}).filter(function (n) { return asArray(s.exercises[n]).length > 0; }).length};
+      Object.keys(s.exercises || {}).filter(function (n) { return asArray(s.exercises[n]).length > 0; }).length,
+    cardio: Array.isArray(s.exercises) ? cardioSummary(s.exercises) :
+      cardioSummary(Object.keys(s.exercises || {}).map(function (n) { return {name: n, done: s.exercises[n]}; }))};
 }
 function markPr(ex, w, r) {
   var best = ex.best || {}, prior = asArray(ex.done), bestE = num(best.e1rm), bestW = num(best.max_w), i, v;
@@ -870,9 +906,10 @@ function newExercise(name, ctx) {
   } else {
     tg = [{w: 20, r: 10}, {w: 20, r: 10}, {w: 20, r: 10}]; best = {e1rm: 0, max_w: 0};
   }
-  return {name: name, last: [], target: tg, why: ref.w > 0 ? 'reference max' : 'new exercise',
+  var out = {name: name, last: [], target: tg, why: ref.w > 0 ? 'reference max' : 'new exercise',
     warmup: warmup(name, tg), step: step(name), rest: COMPOUND.test(name) ? REST_COMPOUND : REST_ACCESSORY,
     best: best, group: classify(name), muscles: musclesFor(name, custom), note: notes[name] || ''};
+  return isCardio(name) ? cardioInfo(out) : out;
 }
 
 // Port of gym_api._apply. Returns a NEW state; never mutates the input.
@@ -935,6 +972,15 @@ function applyOp(state, op, ctx) {
       }
       if (nxt !== null) s.current = nxt;
     }
+  } else if (kind === 'ctimer' && ex) {          // cardio timer start/pause/reset (no op per second)
+    var tm = ex.timer || (ex.timer = {run_since: null, acc: 0});
+    if (op.action === 'start' && !tm.run_since) tm.run_since = t;
+    else if (op.action === 'pause' && tm.run_since) { tm.acc = num(tm.acc) + Math.max(0, t - tm.run_since); tm.run_since = null; }
+    else if (op.action === 'reset') { tm.acc = 0; tm.run_since = null; }
+    s.current = i;
+  } else if (kind === 'clog' && ex) {             // log one cardio interval; the timer starts again from zero
+    ex.done = asArray(ex.done); ex.done.push(cardioEntry(op, t));
+    ex.timer = {run_since: null, acc: 0}; s.current = i; s.rest_until = null;
   } else if (kind === 'undo' && ex && asArray(ex.done).length) {
     ex.done.pop(); s.current = i; s.rest_until = null;
   } else if (kind === 'edit' && ex) {
@@ -1002,9 +1048,14 @@ function csvRows(session) {
         .map(function (w) { return {d: e.warmup[w], kind: 'warmup'}; });
       k = 0;
       warm.concat(d.map(function (x) { return {d: x, kind: 'normal'}; })).forEach(function (row) {
-        rows.push({title: title, start_time: s0, end_time: s1, description: 'Gym Companion',
+        var out = {title: title, start_time: s0, end_time: s1, description: 'Gym Companion',
           exercise_title: e.name, superset_id: '', exercise_notes: '', set_index: k++, set_type: row.kind,
-          weight_kg: fmtKg(row.d.w), reps: num(row.d.r), distance_km: '', duration_seconds: '', rpe: ''});
+          weight_kg: fmtKg(row.d.w), reps: num(row.d.r), distance_km: '', duration_seconds: '', rpe: ''};
+        if (isCardioSet(row.d)) {       // Hevy-style cardio row, as gym_api._write_csv
+          out.weight_kg = ''; out.reps = ''; out.distance_km = row.d.km ? fmtG(row.d.km) : '';
+          out.duration_seconds = row.d.sec ? String(row.d.sec) : ''; out.exercise_notes = cardioNotes(row.d);
+        }
+        rows.push(out);
       });
     }
   } else {
@@ -1047,6 +1098,7 @@ global.GymCore = {
   rateLift: rateLift, score: score, muscleLevels: muscleLevels, overall: overall, progress: progress,
   bodyWeek: bodyWeek, weekStats: weekStats, history: exerciseHistory, buildPlan: buildPlan,
   summary: summary, newExercise: newExercise, applyOp: applyOp, stats: stats,
+  isCardio: isCardio, cardioEntry: cardioEntry, cardioSummary: cardioSummary,
   csvRows: csvRows, csv: csv, normalizeSession: normalizeSession, normalizeSessions: normalizeSessions
 };
 })(window);

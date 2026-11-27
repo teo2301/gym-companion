@@ -36,15 +36,39 @@ function countsOf(data) {
     routines: Object.keys((data.routines && data.routines.templates) || {}).length,
     notes: Object.keys(data.notes || {}).length,
     custom: (data.customExercises || data.custom || []).length,
+    photos: ((data.character && data.character.photos) || []).length,
     from: dates.length ? dates[0] : null, to: dates.length ? dates[dates.length - 1] : null};
+}
+function restoreChar(data, strategy) {
+  if (!global.GymPhoto) return Promise.resolve(false);
+  // Replace must clear photos too, even from an older backup that has no character field.
+  var character = (data && data.character) || (strategy === 'replace' ? {mode: 'cartoon', photos: []} : null);
+  if (!character) return Promise.resolve(false);
+  var merged = strategy === 'replace' ? Promise.resolve(character) : global.GymPhoto.data().then(function (cur) {
+    // merge: keep what's on this phone, add the backup's photos it doesn't have (by id), newest 6 by date
+    var byId = {};
+    (cur.photos || []).concat((character && character.photos) || []).forEach(function (p) { if (p && p.id && !byId[p.id]) byId[p.id] = p; });
+    var photos = Object.keys(byId).map(function (k) { return byId[k]; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+    return {mode: cur.photos && cur.photos.length ? cur.mode : character.mode, current: cur.current || character.current, photos: photos.slice(-6)};
+  });
+  return merged.then(function (c) { return global.GymPhoto.saveData(c); }).then(function () {
+    if (typeof global.renderLifter === 'function') global.renderLifter();
+    if (global.Progress && typeof global.Progress.refreshEvolution === 'function') global.Progress.refreshEvolution();
+    return true;
+  }).catch(function () { return false; });
 }
 function restoreNow(data, strategy) {
   return store.restore(data, strategy).then(function (res) {
-    if (!res || !res.ok) { say((res && res.error) || 'Restore failed'); return res; }
-    if (typeof global.closeSheet === 'function') global.closeSheet();
-    say('Backup restored');
-    if (typeof global.loadPlan === 'function') global.loadPlan();
-    return res;
+    return restoreChar(data, strategy).then(function (photos) {
+      if (!res || !res.ok) {
+        say(photos ? 'Photos restored — server data could not be' : ((res && res.error) || 'Restore failed'));
+        return res;
+      }
+      if (typeof global.closeSheet === 'function') global.closeSheet();
+      say(photos ? 'Backup restored, including your photos' : 'Backup restored');
+      if (typeof global.loadPlan === 'function') global.loadPlan();
+      return res;
+    });
   });
 }
 function previewSheet(data) {
@@ -55,7 +79,8 @@ function previewSheet(data) {
     '<div class="list"><div class="prow"><div>Workouts</div><span class="num">' + c.sessions + '</span></div>' +
     '<div class="prow"><div>Routines</div><span class="num">' + c.routines + '</span></div>' +
     '<div class="prow"><div>Exercise notes</div><span class="num">' + c.notes + '</span></div>' +
-    '<div class="prow"><div>Custom exercises</div><span class="num">' + c.custom + '</span></div></div>' +
+    '<div class="prow"><div>Custom exercises</div><span class="num">' + c.custom + '</span></div>' +
+    '<div class="prow"><div>Character photos</div><span class="num">' + c.photos + '</span></div></div>' +
     '<button class="log" id="rMerge" style="margin-top:14px">Merge into this phone</button>' +
     '<button class="danger" id="rReplace">Replace everything</button>' +
     '<button class="danger" id="rCancel">Cancel</button>';
@@ -108,12 +133,15 @@ var Backup = {
   exportJson: function () {
     if (!store) return Promise.reject(new Error('Backup not initialised'));
     return store.backupData().then(function (data) {
-      return store.saveFile('gym-backup-' + today() + '.json', JSON.stringify(data, null, 2))
-        .then(function (ok) {
-          // false = share sheet cancelled or the Android bridge failed: don't count it as a backup
-          if (ok === false) { say('Backup not saved'); return null; }
-          return store.set('lastBackupAt', Date.now()).then(function () { say('Backup saved'); return data; });
-        });
+      return (global.GymPhoto ? global.GymPhoto.data() : Promise.resolve(null)).then(function (character) {
+        if (character) data.character = character;   // photos stay on-device; only this file carries them
+        return store.saveFile('gym-backup-' + today() + '.json', JSON.stringify(data, null, 2))
+          .then(function (ok) {
+            // false = share sheet cancelled or the Android bridge failed: don't count it as a backup
+            if (ok === false) { say('Backup not saved'); return null; }
+            return store.set('lastBackupAt', Date.now()).then(function () { say('Backup saved'); return data; });
+          });
+      });
     }).catch(function (e) { say('Backup failed'); throw e; });
   },
 

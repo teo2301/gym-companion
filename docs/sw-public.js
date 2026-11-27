@@ -3,9 +3,10 @@
  * Strategy: serve from cache, refresh in the background; a new CACHE name drops old copies.
  * Bump CACHE whenever any shipped file changes (tools/build.sh does this from a content hash).
  */
-var CACHE = 'gym-public-d5bdf1eaad22';
+var CACHE = 'gym-public-b3d022dcfa62';
 var SHELL = ['./', 'index.html', 'config.js', 'body.js', 'character.js', 'gymcore.js', 'gymstore.js',
-  'backup.js', 'pwa.js', 'social.js', 'charts.js', 'progress.js', 'exercises.json', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+  'backup.js', 'pwa.js', 'photo.js', 'social.js', 'charts.js', 'progress.js', 'cardio.js', 'exercises.json',
+  'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
   // cache: 'reload' skips the browser's HTTP cache (GitHub Pages sets max-age=600), so a new version
@@ -16,13 +17,17 @@ self.addEventListener('install', function (e) {
 });
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (keys) {
-    return Promise.all(keys.filter(function (k) { return k.indexOf('gym-public-') === 0 && k !== CACHE; })
+    return Promise.all(keys.filter(function (k) {
+      // gym-mp-* held the old on-device background-removal engine (removed in 1.7): drop it too.
+      return (k.indexOf('gym-public-') === 0 && k !== CACHE) || k.indexOf('gym-mp-') === 0;
+    })
       .map(function (k) { return caches.delete(k); }));
   }).then(function () { return self.clients.claim(); }));
 });
 self.addEventListener('fetch', function (e) {
   var req = e.request;
-  if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
+  var url = new URL(req.url);
+  if (req.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(caches.open(CACHE).then(function (c) {
     return c.match(req, {ignoreSearch: true}).then(function (hit) {
       var net = fetch(req).then(function (res) {

@@ -22,7 +22,20 @@ ROOT = Path(__file__).resolve().parent.parent
 DOCS, SHOTS = ROOT / "docs", ROOT / "tools" / "shots"
 
 
-SITE = Path(tempfile.mkdtemp(prefix="gym-e2e-"))   # a copy of docs/, so the update test can change it
+SITE = Path(tempfile.mkdtemp(prefix="gym-e2e-"))
+BODY_JPG = SITE.parent / "gym-e2e-body.jpg"
+
+
+def body_photo():
+    """A plain full-body silhouette on a light background, used as the photo character."""
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", (600, 900), (225, 228, 232)); d = ImageDraw.Draw(im)
+    skin, shirt, legs = (205, 150, 120), (40, 90, 160), (40, 40, 50)
+    d.ellipse((250, 60, 350, 170), fill=skin); d.rectangle((285, 165, 315, 195), fill=skin)
+    d.rounded_rectangle((205, 190, 395, 480), 40, fill=shirt)
+    d.rounded_rectangle((150, 200, 200, 470), 25, fill=skin); d.rounded_rectangle((400, 200, 450, 470), 25, fill=skin)
+    d.rounded_rectangle((215, 470, 295, 850), 30, fill=legs); d.rounded_rectangle((305, 470, 385, 850), 30, fill=legs)
+    im.save(BODY_JPG, "JPEG", quality=90)   # a copy of docs/, so the update test can change it
 
 
 def serve() -> tuple[http.server.ThreadingHTTPServer, str]:
@@ -56,7 +69,7 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     ctx = browser.new_context(**pw.devices[device], accept_downloads=True, service_workers="allow")
     page = ctx.new_page()
     page.on("pageerror", lambda e: problems.append(f"pageerror: {e}"))
-    page.on("console", lambda m: m.type == "error" and problems.append(f"console: {m.text}"))
+    page.on("console", lambda m: m.type == "error" and not m.text.startswith("INFO:") and problems.append(f"console: {m.text}"))   # MediaPipe logs INFO via console.error
     tag = engine
     page.goto(url)
 
@@ -210,6 +223,67 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
         problems.append("data (or the edit) lost after updating")
     shutil.copy(DOCS / "sw-public.js", sw)   # next engine starts from the real build
 
+    # ---- Cardio: quick start, timer, sprint + jog intervals, persistence, finish + benefits, backup/CSV, editor
+    page.goto(url); page.wait_for_function("window.Store && window.plan", timeout=15000); page.wait_for_timeout(800)
+    page.locator("#openCardio").scroll_into_view_if_needed(); page.click("#openCardio")
+    page.wait_for_selector("#cdPick .it", timeout=5000); page.locator("#cdPick .it").first.click()
+    page.wait_for_selector("#cardioPanel #cdGo", state="visible", timeout=10000)
+    page.click("#cdGo"); page.wait_for_timeout(2300); page.click("#cdGo"); page.wait_for_timeout(500)
+    clock = page.inner_text("#cdClock")
+    if clock in ("0:00", "0:01"):
+        problems.append(f"cardio timer did not run ({clock})")
+    page.click('#cdMode [data-m="sprint"]'); page.fill("#cdKmh", "15"); page.fill("#cdKm", "0.5")
+    page.click("#logBtn"); page.wait_for_selector("#exSets .cdset", timeout=5000)
+    page.click('#cdMode [data-m="jog"]'); page.fill("#cdMin", "10"); page.fill("#cdKmh", "8"); page.fill("#cdKcal", "99")
+    page.click("#logBtn"); page.wait_for_function("document.querySelectorAll('#exSets .cdset').length === 2", timeout=5000)
+    page.screenshot(path=SHOTS / f"{tag}-7-cardio.png")
+    page.reload(); page.wait_for_selector("#cardioPanel", state="visible", timeout=15000); page.wait_for_timeout(600)
+    if page.locator("#exSets .cdset").count() != 2:
+        problems.append("cardio intervals not kept after reload")
+    page.click("#finishBtn"); page.wait_for_selector("#fYes", state="visible", timeout=5000); page.click("#fYes")
+    page.wait_for_selector("#done.on", timeout=10000); page.wait_for_selector("#sBenefits .hb", timeout=5000)
+    ben = page.inner_text("#sBenefits")
+    if "Cardiorespiratory" not in ben or "Sprints" not in ben or "not medical advice" not in ben:
+        problems.append("benefits card incomplete: %r" % ben[:120])
+    page.locator("#sBenefits").scroll_into_view_if_needed(); page.screenshot(path=SHOTS / f"{tag}-8-benefits.png")
+    page.click("#homeBtn"); page.wait_for_timeout(1500)
+    sess = page.evaluate("Store.backupData().then(function (d) { return d.sessions; })")
+    cs = [d for s in sess for e in (s.get("exercises") or []) if isinstance(e, dict) for d in (e.get("done") or []) if d.get("mode")]
+    if sorted(d["mode"] for d in cs) != ["jog", "sprint"] or not any(d["km"] == 0.5 and d["kmh"] == 15 for d in cs) or not any(d["kcal"] == 99 and d["sec"] == 600 for d in cs):
+        problems.append("backup lacks cardio fields: %r" % cs)
+    csv = page.evaluate("Store.backupData().then(function (d) { return GymCore.csv(d.sessions); })")
+    if ",0.5," not in csv or ",600," not in csv or "mode=sprint" not in csv or "kcal=99" not in csv:
+        problems.append("CSV lacks cardio distance/duration/notes")
+    wk = page.evaluate("Store.workouts().then(function (l) { return Store.workout(l[0].id); })")
+    page.evaluate("workoutEditor(%r)" % wk["id"]); page.wait_for_selector("#wSave", timeout=5000)
+    if "Sprint" not in page.inner_text("#wBody") or not page.locator("#wBenefits .hb").count():
+        problems.append("workout editor doesn't show cardio intervals / benefits")
+    page.click("#wSave"); page.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=5000)
+    wk2 = page.evaluate("Store.workout(%r)" % wk["id"])
+    if sum(1 for e in wk2["exercises"] for x in e["sets"] if x.get("type") == "cardio") != 2:
+        problems.append("saving the edited workout dropped cardio intervals")
+
+    # ---- Photo character: a framed full-body picture (no background removal), shown on home, in backups; crafted backups can't inject
+    page.click("#settingsBtn"); page.wait_for_selector("#charNew", timeout=5000); page.click("#charNew")
+    page.wait_for_selector("#phFile", state="attached", timeout=5000)
+    page.set_input_files("#phFile", str(BODY_JPG))
+    page.wait_for_function("!document.getElementById('phSave').disabled", timeout=10000)
+    page.click("#phSave")
+    page.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=90000)
+    page.wait_for_selector("#lifterFig .char-photo img", timeout=10000)
+    page.wait_for_timeout(600); page.locator("#lifterFig").screenshot(path=SHOTS / f"{tag}-9a-photo-card.png")
+    ph = page.evaluate("GymPhoto.data()")
+    if not ph["photos"] or not ph["photos"][0]["img"].startswith("data:image/jpeg;base64,") or ph["mode"] != "photo":
+        problems.append("photo character not saved")
+    if not page.evaluate("Store.backupData && Backup ? true : false"):
+        problems.append("backup module missing")
+    page.evaluate("""GymPhoto.saveData({mode: 'photo', photos: [{id: 'evil', img: 'x" onerror="window.__pwned=1', date: '2026-01-01', lv: 3}]})
+      .then(function () { renderLifter(); })""")
+    page.wait_for_timeout(800)
+    if page.evaluate("window.__pwned") or page.evaluate("GymPhoto.data().then(function (d) { return d.photos.length; })") != 0:
+        problems.append("crafted photo data was not rejected")
+    page.screenshot(path=SHOTS / f"{tag}-9-photo.png")
+
     print(f"{engine:9} {device:18} LV {lv} -> offline LV {lv_off}, workouts {len(sessions)}, "
           f"{n_ex} exercises, tone {page.evaluate('Lifter.tone()')}, problems {len(problems)}")
     browser.close()
@@ -218,6 +292,7 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
 
 def main() -> int:
     SHOTS.mkdir(exist_ok=True)
+    body_photo()
     srv, url = serve()
     failed = []
     with sync_playwright() as pw:

@@ -8,6 +8,8 @@ bodyweight-relative standards per muscle group.
 (JSON for restore, CSV for spreadsheets). Also: 190 preset exercises, editable routines and workouts,
 weekly averages and streaks, and a character with a choice of skin tone.
 
+**Photo character (optional):** choose a full-body photo once and position it in the frame; it is never uploaded. It gets a tier-coloured frame and LV badge, and Progress has a before/after slider. Photos stay in app storage and are only included if you download a JSON backup. The watch keeps the cartoon.
+
 **Progress & charts (free):** training per week (volume / sets / workouts / time), a consistency
 calendar, lifter level over time, sets per muscle vs the 10-20 range, strength by muscle, bodyweight
 trend, PR timeline, and per exercise: estimated 1RM / heaviest / volume / reps charts with PRs marked,
