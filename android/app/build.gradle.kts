@@ -20,8 +20,8 @@ android {
         applicationId = "io.github.teo2301.gymcompanion"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.10"
+        versionCode = 13
+        versionName = "1.13"
     }
 
     signingConfigs {
