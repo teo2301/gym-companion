@@ -3,7 +3,7 @@
  * Strategy: serve from cache, refresh in the background; a new CACHE name drops old copies.
  * Bump CACHE whenever any shipped file changes (tools/build.sh does this from a content hash).
  */
-var CACHE = 'gym-public-00ff9d4e1057';
+var CACHE = 'gym-public-196f452f34e2';
 var SHELL = ['./', 'index.html', 'config.js', 'body.js', 'character.js', 'gymcore.js', 'gymstore.js',
   'backup.js', 'pwa.js', 'photo.js', 'social.js', 'charts.js', 'progress.js', 'cardio.js', 'exercises.json',
   'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];

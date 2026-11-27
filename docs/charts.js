@@ -166,12 +166,14 @@ function bindPointer(svg, move, leave) {
   svg.style.touchAction = 'pan-y';
 }
 
-/* ---------- vertical bars: opts {items:[{x:ms or label, y, label?, now?}], yFmt, unit, height, labelEvery} */
+/* ---------- vertical bars: opts {items:[{x:ms or label, y, label?, now?}], yFmt, unit, height, max, ticks} */
 function bars(box, opts) {
   var items = opts.items || [];
-  if (!items.length || !items.some(function (i) { return i.y > 0; })) { empty(box, opts.emptyText || 'Nothing in this period yet.'); return; }
+  // with a shared scale (opts.max) an all-zero chart still draws, so small multiples line up
+  if (!items.length || (!opts.max && !items.some(function (i) { return i.y > 0; }))) { empty(box, opts.emptyText || 'Nothing in this period yet.'); return; }
   var f = frame(box, opts.height), svg = f.svg, W = f.W, H = f.H, L = 40, R = 8, T = 12, B = 24;
-  var ax = nice(0, Math.max.apply(null, items.map(function (i) { return i.y; })), 4), yf = opts.yFmt || fmtNum;
+  // opts.max: shared y-scale for small multiples (every chart in the set gets the same top)
+  var ax = nice(0, Math.max.apply(null, items.map(function (i) { return i.y; }).concat([opts.max || 0])), opts.ticks || 4), yf = opts.yFmt || fmtNum;
   var Y = function (v) { return T + (1 - v / ax.hi) * (H - T - B); };
   ax.ticks.forEach(function (t) { el('line', {x1: L, x2: W - R, y1: Y(t), y2: Y(t), stroke: C.grid, 'stroke-width': 1}, svg); txt(svg, L - 6, Y(t) + 4, yf(t), 'end'); });
   var band = (W - L - R) / items.length, bw = Math.max(2, Math.min(24, band - 2));

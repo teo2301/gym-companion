@@ -58,6 +58,7 @@ function styles() {
     '.pgsub{color:var(--dim);font-size:13px;margin:0 0 8px}',
     '.pgseg{display:flex;gap:4px;margin:6px 0 8px;flex-wrap:wrap}.pgseg button{height:30px;padding:0 11px;border-radius:9px;background:var(--card2);color:var(--dim);font-size:13px;font-weight:700}',
     '.pgseg button.on{background:var(--line);color:var(--text)}',
+    '.pggrp{margin-top:4px}.pggh{display:flex;align-items:baseline;gap:8px;margin:6px 2px -2px;font-size:13.5px}.pggh b{flex:1}.pggh span{color:var(--dim);font-size:12.5px;font-weight:700}.pggdef{display:block;color:var(--dim2);font-size:11.5px;margin-top:6px}',
     '.pgnote{color:var(--dim);font-size:13px;margin-top:6px}.pgnote b{color:var(--text)}',
     '.pgrow{display:flex;align-items:center;gap:10px;padding:10px 2px;border-top:1px solid var(--line);cursor:pointer}.pgrow:first-child{border-top:0}',
     '.pgrow div{flex:1;min-width:0}.pgrow b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pgrow small{color:var(--dim);font-size:12.5px}',
@@ -202,6 +203,7 @@ function render() {
   html += card('lvl', 'Lifter level', 'Your overall strength level (1–50), week by week.');
   html += card('evo', 'Your evolution', 'Before / after photos — stored only on this device.');
   html += card('mus', 'Muscles trained', 'Average sets per week. Most people grow best with about 10–20 per muscle.');
+  html += card('grp', 'Muscle-group trends', 'Sets per week for each group, all on the same scale.');
   html += card('str', 'Strength by muscle', 'Your best lift for each muscle against bodyweight standards. Tap one for its chart.');
   html += card('bw', 'Bodyweight', null, '');
   html += '<div class="pgcard"><div class="pgch"><h3>Personal records</h3><span class="pgsub" style="margin:0">' + P.length + ' in this period</span></div><div id="pg_prs"></div></div>';
@@ -265,6 +267,36 @@ function render() {
   var low = mItems.filter(function (i) { return i.value < 10 && i.value > 0; }).slice(-3).map(function (i) { return i.label; });
   var zero = mItems.filter(function (i) { return !i.value; }).map(function (i) { return i.label; });
   q('pgn_mus').innerHTML = LW.length ? (low.length ? 'Could use more: <b>' + e(low.join(', ')) + '</b>. ' : '') + (zero.length ? 'Not trained: ' + e(zero.slice(0, 4).join(', ')) + (zero.length > 4 ? '…' : '') + '.' : '') : '';
+
+  /* muscle-group trends: small multiples, one single-series bar chart per group, one shared y-scale */
+  var G = groupTrend(LW), gMax = 0;
+  G.list.forEach(function (b) { GROUPS.forEach(function (g) { gMax = Math.max(gMax, b[g[0]]); }); });
+  tables.grp = function (box) { Charts.table(box, [G.monthly ? 'Month (avg / wk)' : 'Week of'].concat(GROUPS.map(function (g) { return g[1]; })),
+    G.list.slice().reverse().map(function (b) { return [G.monthly ? b.key.slice(0, 7) : b.key].concat(GROUPS.map(function (g) { return b[g[0]]; })); })); };
+  if (isTable('grp')) tables.grp(q('pg_grp'));
+  else {
+    var gbox = q('pg_grp'); gbox.textContent = '';
+    GROUPS.forEach(function (g) {
+      var row = document.createElement('div'); row.className = 'pggrp';
+      var h = document.createElement('div'); h.className = 'pggh';
+      var nm = document.createElement('b'); nm.textContent = g[1]; h.appendChild(nm);
+      var av = document.createElement('span'); av.textContent = G.avg[g[0]] + ' / wk'; h.appendChild(av);
+      row.appendChild(h);
+      var c = document.createElement('div'); row.appendChild(c); gbox.appendChild(row);
+      Charts.bars(c, {height: 96, max: gMax || null, ticks: 2, unit: ' sets',
+        yFmt: function (v) { return String(Math.round(v * 10) / 10); },
+        items: G.list.map(function (b, i) {
+          var ms = new Date(b.key + 'T12:00:00').getTime();
+          return {x: ms, y: b[g[0]], now: i === G.list.length - 1,
+            label: G.monthly ? new Date(ms).toLocaleDateString('en-GB', {month: 'short'}) : null,
+            tip: g[1] + ' · ' + (G.monthly ? 'avg a week, ' + new Date(ms).toLocaleDateString('en-GB', {month: 'long', year: 'numeric'}) : 'week of ' + niceDate(b.key))};
+        }),
+        emptyText: 'No sets in this period yet.'});
+    });
+  }
+  var gTop = GROUPS.slice().sort(function (a, b) { return G.avg[b[0]] - G.avg[a[0]]; }), gLow = gTop[gTop.length - 1];
+  q('pgn_grp').innerHTML = (LW.length && G.avg[gTop[0][0]] ? 'Most: <b>' + gTop[0][1] + '</b> (' + G.avg[gTop[0][0]] + ' a week) · least: <b>' + gLow[1] + '</b> (' + G.avg[gLow[0]] + ').' : '') +
+    '<small class="pggdef">Push = chest, front/side delts, triceps · Pull = back, lats, rear delts, biceps, traps, forearms · Legs = quads, hamstrings, glutes, calves, adductors · Core = abs, obliques, lower back.</small>';
 
   /* strength by muscle */
   var mus = (pr && pr.muscles) || {};
@@ -335,6 +367,34 @@ function tile(k, v, sub, cmp) { return '<div><small>' + k + '</small><b class="n
 function rowClick(ev) { var r = ev.target.closest && ev.target.closest('[data-ex]'); if (r) { buzz(); exerciseSheet(r.getAttribute('data-ex')); } }
 
 /* weekly buckets across the period (monthly when the period is long), zero-filled */
+/* Muscle-group trends: weeks[].groups = sets per group from the engine (gym_progress / gymcore,
+ * a set counts once per group: 1 if a primary muscle is in it, 0.5 if only a secondary). */
+var GROUPS = [['push', 'Push'], ['pull', 'Pull'], ['legs', 'Legs'], ['core', 'Core']];
+/* -> {list:[{key, push, pull, legs, core}], avg:{...}, monthly}.
+ * More than 26 weeks: one bar per month holding the average sets per week of that month's weeks. */
+function groupTrend(weeks) {
+  var r1 = function (v) { return Math.round(v * 10) / 10; };
+  var wk = weeks.map(function (w) {
+    var b = {key: w.week}, gs = w.groups || {};
+    GROUPS.forEach(function (g) { b[g[0]] = +gs[g[0]] || 0; });
+    return b;
+  });
+  var avg = {}, n = Math.max(1, wk.length);
+  GROUPS.forEach(function (g) { avg[g[0]] = r1(wk.reduce(function (a, b) { return a + b[g[0]]; }, 0) / n); });
+  var monthly = wk.length > 26, list = wk;
+  if (monthly) {
+    var map = {}; list = [];
+    wk.forEach(function (b) {
+      var k = b.key.slice(0, 8) + '01', m = map[k];
+      if (!m) { m = map[k] = {key: k, n: 0, push: 0, pull: 0, legs: 0, core: 0}; list.push(m); }
+      m.n++; GROUPS.forEach(function (g) { m[g[0]] += b[g[0]]; });
+    });
+    list.forEach(function (m) { GROUPS.forEach(function (g) { m[g[0]] /= m.n; }); });
+  }
+  list.forEach(function (b) { GROUPS.forEach(function (g) { b[g[0]] = r1(b[g[0]]); }); });
+  return {list: list, avg: avg, monthly: monthly};
+}
+
 function bucketize(W, cut) {
   var first = cut !== '0000-00-00' ? cut : (W.length ? W[0].date : dstr(new Date()));
   var monthly = (Date.now() - new Date(first + 'T00:00:00')) / 864e5 > 400, list = [], map = {};

@@ -168,6 +168,21 @@ var FIELDS = ['title', 'start_time', 'end_time', 'description', 'exercise_title'
 var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 var PUSH = {chest: 1, front_delts: 1, side_delts: 1, triceps: 1};
 var PULL = {lats: 1, upper_back: 1, rear_delts: 1, biceps: 1};
+// Muscle-group trend charts: every muscle in exactly one group (same table as gym_progress.GROUP_OF)
+var GROUPS = ['push', 'pull', 'legs', 'core'];
+var GROUP_OF = {chest: 'push', front_delts: 'push', side_delts: 'push', triceps: 'push',
+  lats: 'pull', upper_back: 'pull', rear_delts: 'pull', biceps: 'pull', traps: 'pull', forearms: 'pull',
+  quads: 'legs', hamstrings: 'legs', glutes: 'legs', calves: 'legs', adductors: 'legs',
+  abs: 'core', obliques: 'core', lower_back: 'core'};
+// Per set, each group counts once: 1 if a primary muscle is in it, else 0.5 if only a secondary is.
+function groupCredit(mm) {
+  var out = {};
+  GROUPS.forEach(function (g) {
+    var inG = function (m) { return GROUP_OF[m] === g; };
+    if (mm.primary.some(inG)) out[g] = 1; else if (mm.secondary.some(inG)) out[g] = 0.5;
+  });
+  return out;
+}
 var UPPER = {chest: 1, front_delts: 1, side_delts: 1, triceps: 1, lats: 1, upper_back: 1, rear_delts: 1, biceps: 1, traps: 1};
 var LOWER = {quads: 1, hamstrings: 1, glutes: 1, calves: 1, adductors: 1};
 
@@ -654,6 +669,7 @@ function progress(opts) {
     var wk = weekStart(sessions[0].start), end, guard = 0;
     while (wk <= now && guard++ < 800) {
       end = wk + 7 * 86400000; sets = {};
+      var groups = {push: 0, pull: 0, legs: 0, core: 0}, gc, g;
       for (i = 0; i < sessions.length; i++) {
         if (sessions[i].start < wk || sessions[i].start >= end) continue;
         for (m in sessions[i].exercises) {
@@ -662,11 +678,14 @@ function progress(opts) {
           var mm = musclesFor(m, custom), n = workSets(setsFor).length, k;
           for (k = 0; k < mm.primary.length; k++) sets[mm.primary[k]] = (sets[mm.primary[k]] || 0) + n;
           for (k = 0; k < mm.secondary.length; k++) sets[mm.secondary[k]] = (sets[mm.secondary[k]] || 0) + n * 0.5;
+          gc = groupCredit(mm);
+          for (g in gc) if (has(gc, g)) groups[g] += n * gc[g];
         }
       }
       for (m in sets) if (has(sets, m)) sets[m] = r1(sets[m]);
       var sc = overall(muscleLevels(bestsUntil(sessions, end, seed), bw, custom));
-      weeks.push({week: dateStr(new Date(wk)), sets: sets, score: sc.score, lv: sc.lv});
+      for (g in groups) if (has(groups, g)) groups[g] = r1(groups[g]);
+      weeks.push({week: dateStr(new Date(wk)), sets: sets, groups: groups, score: sc.score, lv: sc.lv});
       wk = end;
     }
   }

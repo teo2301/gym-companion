@@ -143,6 +143,24 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     if "81.5" not in page.inner_text("#pgn_bw"):
         problems.append("bodyweight log not shown")
     page.click('[data-tab="train"]'); page.wait_for_selector("#pg_train table", timeout=3000); page.click('[data-tab="train"]')
+    # Muscle-group trends: four small charts (Push/Pull/Legs/Core), one shared y-scale, a Table view
+    heads = page.locator("#pg_grp .pggh b").all_inner_texts()
+    if heads != ["Push", "Pull", "Legs", "Core"]:
+        problems.append("muscle-group trends should show Push/Pull/Legs/Core: %r" % heads)
+    tops = page.evaluate("""Array.from(document.querySelectorAll('#pg_grp svg')).map(function (s) {
+        var t = Array.from(s.querySelectorAll('text')).map(function (x) { return parseFloat(x.textContent); }).filter(isFinite);
+        return Math.max.apply(null, t); })""")
+    if not tops or len(set(tops)) != 1:
+        problems.append("muscle-group charts must share one y-scale: %r" % tops)
+    page.locator("#pg_grp").scroll_into_view_if_needed(); page.wait_for_timeout(200)
+    page.screenshot(path=SHOTS / f"{tag}-4e-groups.png")
+    page.click('[data-tab="grp"]'); page.wait_for_selector("#pg_grp table", timeout=3000)
+    ghead = page.locator("#pg_grp th").all_inner_texts()
+    grow = page.locator("#pg_grp td").all_inner_texts()
+    gsum = sum(float(x) for i, x in enumerate(grow) if i % 5)
+    if ghead[1:] != ["Push", "Pull", "Legs", "Core"] or gsum <= 0:
+        problems.append("muscle-group table wrong: %r %r" % (ghead, grow[:10]))
+    page.click('[data-tab="grp"]')
     page.locator("#pg_ex .pgrow").first.scroll_into_view_if_needed(); page.locator("#pg_ex .pgrow").first.click()
     page.wait_for_selector("#exReps table", timeout=8000)
     page.screenshot(path=SHOTS / f"{tag}-4c-exercise.png")
