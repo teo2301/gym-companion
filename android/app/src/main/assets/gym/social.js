@@ -8,7 +8,7 @@
 var BASE = String(window.GYM_SOCIAL_API || '').replace(/\/+$/, '');
 var ORIGIN = BASE.replace(/^(https?:\/\/[^\/]+).*$/, '$1');
 var INVITE_URL = 'https://teo2301.github.io/gym-companion/#friend=';
-var token = null, me = null, pendingInvite = null, feedCache = [];
+var token = null, me = null, pendingInvite = null, feedCache = [], shareOn = true, lastSync = 0, lastSig = '';
 
 function $(id) { return document.getElementById(id); }
 function e(t) { return window.esc ? window.esc(t) : String(t).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
@@ -87,7 +87,7 @@ function workoutCard(w) {
 }
 function postHtml(p) {
   return '<div class="spost" data-id="' + e(p.id) + '">' +
-    '<div class="sph">' + avatar(p.author) + '<div class="spn"><b>' + e(p.author.name) + '</b><small>' + e(ago(p.created)) + '</small></div>' +
+    '<div class="sph" data-a="prof" data-u="' + e(p.author.id) + '">' + avatar(p.author) + '<div class="spn"><b>' + e(p.author.name) + '</b><small>' + e(ago(p.created)) + '</small></div>' +
     (p.mine ? '<button class="sdel" data-a="del" aria-label="Delete post">⋯</button>' : '') + '</div>' +
     (p.caption ? '<p class="scap">' + e(p.caption).replace(/\n/g, '<br>') + '</p>' : '') +
     (p.photo ? '<img class="sphoto" src="' + e(media(p.photo)) + '" alt="Progress photo" loading="lazy">' : '') +
@@ -132,6 +132,19 @@ function styles() {
     '.sfr{display:flex;align-items:center;gap:10px;background:var(--card);border-radius:14px;padding:8px 10px;margin-bottom:6px}.sfr b{flex:1}.sfr button{color:var(--dim);font-size:13.5px;padding:8px}',
     '.spick{display:flex;align-items:center;gap:12px;margin:4px 0 12px}.spick label{height:44px;padding:0 16px;border-radius:14px;background:var(--card2);display:flex;align-items:center;font-weight:700;color:var(--volt)}',
     '.spick input{display:none}.sprev{width:84px;height:84px;border-radius:14px;object-fit:cover}',
+    '.sfn{cursor:pointer}.sfn small{color:var(--dim);font-weight:600;font-size:12.5px;margin-left:4px}',
+    '.sph[data-a=prof]{cursor:pointer}',
+    '.pvh{display:flex;align-items:center;gap:14px;margin-bottom:14px}',
+    '.pvlv{display:flex;gap:14px;align-items:center;background:var(--card);border-radius:20px;padding:14px}',
+    '.pvfig{width:38%;max-width:150px;flex:none}.pvfig svg{width:100%;height:auto;display:block}',
+    '.pvlvt{flex:1;min-width:0}.pvlvt small{display:block;color:var(--dim);font-size:12.5px}',
+    '.pvnum{display:block;font-size:56px;line-height:1;font-weight:900;color:var(--text)}',
+    '.pvbar{height:8px;border-radius:6px;background:var(--card2);margin-top:10px;overflow:hidden}.pvbar i,.pvm i{display:block;height:100%;border-radius:6px}',
+    '.pvstats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}.pvstats div{background:var(--card);border-radius:14px;padding:10px 4px;text-align:center}',
+    '.pvstats b{display:block;font-size:18px}.pvstats small{color:var(--dim);font-size:11.5px}',
+    '.pvm{display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:13.5px}.pvm span{width:84px;flex:none;color:var(--dim)}',
+    '.pvm div{flex:1;height:8px;border-radius:6px;background:var(--card2);overflow:hidden}.pvm small{width:78px;flex:none;text-align:right;color:var(--dim);font-size:12px}',
+    '.pvwd{color:var(--dim);font-size:12.5px;margin:10px 4px -4px}',
     '.stog{display:flex;align-items:center;gap:10px;background:var(--card);border-radius:14px;padding:12px;margin-bottom:10px;font-size:15px}.stog input{width:22px;height:22px;accent-color:#d7ff3e}'
   ].join('\n');
   document.head.appendChild(s);
@@ -202,6 +215,7 @@ function profileSheet() {
   openSheet('<h2 style="margin:0 0 12px;font-size:24px">Your profile</h2>' +
     '<div style="display:flex;align-items:center;gap:14px;margin-bottom:12px">' + avatar(me, 'big') + '<div style="flex:1">' + photoPicker('sAva2', 'Change photo') + '</div></div>' +
     '<input class="txt" id="sName2" maxlength="30" value="' + e(me.name) + '">' +
+    '<label class="stog"><input type="checkbox" id="sShareProf"' + (shareOn ? ' checked' : '') + '><span>Let friends see my level and recent workouts</span></label>' +
     '<button class="log" id="sSaveP">Save</button>' +
     '<button class="finish" id="sReset">Get a new friend code</button>' +
     '<button class="danger" id="sDelAcc">Delete my account and all my posts</button>');
@@ -209,6 +223,8 @@ function profileSheet() {
   $('sSaveP').onclick = function () {
     var name = $('sName2').value.trim();
     var jobs = [];
+    var want = $('sShareProf').checked;
+    if (want !== shareOn) { shareOn = want; Store.set('socialShare', want); jobs.push(want ? sync(true) : api('DELETE', '/api/me/profile')); }
     if (name && name !== me.name) jobs.push(api('POST', '/api/me', {name: name}).then(function (j) { remember(null, j.me); }));
     if (blob) jobs.push(api('PUT', '/api/me/avatar', undefined, blob).then(function (j) { remember(null, j.me); }));
     Promise.all(jobs).then(function () { closeSheet(); toastOk('Profile saved'); renderHome(); }).catch(function (err) { toast(err.message); });
@@ -245,8 +261,11 @@ function loadFriends() {
   api('GET', '/api/friends').then(function (j) {
     if (!$('sList')) return;
     $('sList').innerHTML = j.friends.length ? j.friends.map(function (f) {
-      return '<div class="sfr">' + avatar(f) + '<b>' + e(f.name) + '</b><button data-id="' + e(f.id) + '" data-n="' + e(f.name) + '">Remove</button></div>';
+      return '<div class="sfr">' + avatar(f) + '<b class="sfn" data-u="' + e(f.id) + '">' + e(f.name) + ' <small>View ›</small></b><button data-id="' + e(f.id) + '" data-n="' + e(f.name) + '">Remove</button></div>';
     }).join('') : '<p class="sub">No friends yet. Share your invite, or type a friend’s code above.</p>';
+    Array.prototype.forEach.call($('sList').querySelectorAll('[data-u]'), function (b) {
+      b.onclick = function () { buzz(); profileView(b.getAttribute('data-u')); };
+    });
     Array.prototype.forEach.call($('sList').querySelectorAll('button[data-id]'), function (b) {
       b.onclick = function () {
         if (!confirm('Remove ' + b.getAttribute('data-n') + '? You stop seeing each other’s posts.')) return;
@@ -270,6 +289,81 @@ function acceptInvite() {
   try { history.replaceState(null, '', location.pathname + location.search); } catch (err) {}
   if (!code || !me || code === me.code) return;
   if (confirm('Add the person who invited you (code ' + code + ') as a friend?')) addFriend(code);
+}
+
+/* ---------- profile snapshot: what friends see on my profile page */
+function cardFor(w, summary) {
+  var lifts = w.exercises.map(function (x) {
+    var work = x.sets.filter(function (s) { return s.type !== 'warmup' && s.type !== 'cardio'; }); if (!work.length) return null;
+    var top = work.reduce(function (a, b) { return b.w > a.w || (b.w === a.w && b.r > a.r) ? b : a; });
+    return {name: x.name, w: top.w, r: top.r, sets: work.length, vol: work.reduce(function (t, s) { return t + s.w * s.r; }, 0)};
+  }).filter(Boolean).sort(function (a, b) { return b.vol - a.vol; }).slice(0, 4);
+  var o = (window.prog && prog.overall) || {};
+  return {title: w.title, date: w.date_str, minutes: (summary && summary.minutes) || w.duration_min, sets: (summary && summary.sets) || w.total_sets,
+    volume: (summary && summary.volume) || w.total_volume_kg, lv: o.lv || 0, tier: o.tier || '',
+    lifts: lifts.map(function (l) { return {name: l.name, w: l.w, r: l.r, sets: l.sets}; }),
+    prs: ((summary && summary.prs) || []).map(function (p) { return p.ex + ' ' + kg(p.w) + ' kg × ' + p.r; })};
+}
+function buildSnapshot() {
+  var o = (window.prog && prog.overall) || null; if (!o || !Store.workouts) return Promise.resolve(null);
+  return Store.workouts().then(function (list) {
+    var total = list.reduce(function (t, w) { return t + (w.total_volume_kg || 0); }, 0);
+    var weeks = {}, wk = function (ms) { return Math.floor((ms - 3 * 86400000) / (7 * 86400000)); };   // Monday-based weeks
+    list.forEach(function (w) { weeks[wk(w.start)] = 1; });
+    var cur = wk(Date.now()), streak = 0, k = weeks[cur] ? cur : cur - 1;
+    while (weeks[k]) { streak++; k--; }
+    var recent = list.filter(function (w) { return w.start > Date.now() - 84 * 86400000; }).length;
+    var oldest = list.length ? list[list.length - 1].date_str : '';
+    return Promise.all(list.slice(0, 12).map(function (w) { return Store.workout(w.id).then(function (f) { return cardFor(f); }).catch(function () { return null; }); }))
+      .then(function (cards) {
+        var mn = window.mname || function (x) { return x; };
+        return {lv: o.lv, tier: o.tier, score: o.score, xp: ((o.score * 10) % 1),
+          muscles: Object.keys(prog.muscles || {}).map(function (m) { var x = prog.muscles[m]; return {name: mn(m), level: x.level, score: x.score, lift: x.lift || ''}; })
+            .sort(function (a, b) { return b.score - a.score; }),
+          stats: {workouts: list.length, volume: Math.round(total), streak_weeks: streak, avg_week: Math.round(recent / 12 * 10) / 10, since: oldest},
+          workouts: cards.filter(Boolean)};
+      });
+  });
+}
+/* push my snapshot (throttled; skipped if nothing changed) */
+function sync(force) {
+  if (!token || !shareOn || !enabled()) return Promise.resolve();
+  if (!force && Date.now() - lastSync < 5 * 60 * 1000) return Promise.resolve();
+  return buildSnapshot().then(function (snap) {
+    if (!snap) return;
+    var sig = JSON.stringify(snap);
+    if (!force && sig === lastSig) { lastSync = Date.now(); return; }
+    return api('PUT', '/api/me/profile', snap).then(function () { lastSync = Date.now(); lastSig = sig; });
+  }).catch(function () {});
+}
+
+/* ---------- a friend's profile page */
+function profileView(id) {
+  openSheet('<div id="pv"><p class="sub">Loading…</p></div>');
+  api('GET', '/api/users/' + encodeURIComponent(id)).then(function (j) {
+    if (!$('pv')) return;
+    var p = j.profile, u = j.user, h = '<div class="pvh">' + avatar(u, 'big') + '<div><h2 style="margin:0;font-size:24px">' + e(u.name) + (j.mine ? ' <small style="color:var(--dim);font-size:13px">(you)</small>' : '') + '</h2>' +
+      '<div class="sub">' + (j.posts ? j.posts + ' post' + (j.posts > 1 ? 's' : '') + ' · ' : '') + (j.updated ? 'updated ' + e(ago(j.updated)) : '') + '</div></div></div>';
+    if (!p) {
+      $('pv').innerHTML = h + '<p class="sub" style="margin-top:14px">' + (j.mine ? 'You aren’t sharing your profile. Turn it on in Friends → Profile.' : e(u.name) + ' hasn’t shared their level or workouts yet. They need the latest app version and to open it once.') + '</p>';
+      return;
+    }
+    var tc = ['#5b7a99', '#3ea8ff', '#3ee08f', '#d7ff3e', '#ffb020'], ti = p.score < 0 ? -1 : Math.min(4, Math.floor(p.score)), col = ti < 0 ? '#8d94a0' : tc[ti];
+    h += '<div class="pvlv"><div class="pvfig">' + (window.Lifter ? Lifter.svg(p.score) : '') + '</div><div class="pvlvt"><small>Lifter level</small>' +
+      '<b class="pvnum">' + p.lv + '</b><span style="color:' + col + ';font-weight:800">' + e(p.tier) + '</span>' +
+      '<div class="pvbar"><i style="width:' + Math.round(p.xp * 100) + '%;background:' + col + '"></i></div></div></div>';
+    var s = p.stats;
+    h += '<div class="pvstats"><div><b>' + s.workouts + '</b><small>workouts</small></div><div><b>' + (s.volume >= 1000 ? Math.round(s.volume / 1000).toLocaleString() + 't' : s.volume + ' kg') + '</b><small>lifted</small></div>' +
+      '<div><b>' + s.streak_weeks + '</b><small>week streak</small></div><div><b>' + s.avg_week + '</b><small>per week</small></div></div>';
+    if (p.muscles.length) h += '<div class="label" style="margin:14px 2px 6px">Muscle levels</div>' + p.muscles.map(function (m) {
+      var i = m.score < 0 ? 0 : Math.min(4, Math.floor(m.score)), w = Math.max(4, Math.min(100, (m.score + 1) / 6 * 100));
+      return '<div class="pvm"><span>' + e(m.name) + '</span><div><i style="width:' + w + '%;background:' + tc[i] + '"></i></div><small>' + e(m.level) + '</small></div>';
+    }).join('');
+    h += '<div class="label" style="margin:14px 2px 6px">Recent workouts</div>' + (p.workouts.length ? p.workouts.map(function (w) {
+      return '<div class="pvwd">' + e(w.date) + '</div>' + workoutCard(w);
+    }).join('') : '<p class="sub">No workouts yet.</p>');
+    $('pv').innerHTML = h;
+  }).catch(function (err) { if ($('pv')) $('pv').innerHTML = '<p class="sub">' + e(err.message) + '</p>'; });
 }
 
 /* ---------- feed */
@@ -297,6 +391,7 @@ function feedSheet() {
 function feedClick(ev) {
   var b = ev.target.closest && ev.target.closest('[data-a]'); if (!b) return;
   var card = b.closest('.spost'), id = card && card.getAttribute('data-id'), a = b.getAttribute('data-a');
+  if (a === 'prof') { if (!ev.target.closest('[data-a="del"]')) { buzz(); profileView(b.getAttribute('data-u')); } return; }
   if (a === 'like') {
     buzz();
     api('POST', '/api/posts/' + id + '/like').then(function (j) {
@@ -332,16 +427,7 @@ function latestWorkoutCard(summary) {
   if (!Store.workouts) return Promise.resolve(null);
   return Store.workouts().then(function (l) { return l.length ? Store.workout(l[0].id) : null; }).then(function (w) {
     if (!w) return null;
-    var lifts = w.exercises.map(function (x) {
-      var work = x.sets.filter(function (s) { return s.type !== 'warmup'; }); if (!work.length) return null;
-      var top = work.reduce(function (a, b) { return b.w > a.w || (b.w === a.w && b.r > a.r) ? b : a; });
-      return {name: x.name, w: top.w, r: top.r, sets: work.length, vol: work.reduce(function (t, s) { return t + s.w * s.r; }, 0)};
-    }).filter(Boolean).sort(function (a, b) { return b.vol - a.vol; }).slice(0, 4);
-    var o = (window.prog && prog.overall) || {};
-    return {title: w.title, date: w.date_str, minutes: (summary && summary.minutes) || w.duration_min, sets: (summary && summary.sets) || w.total_sets,
-      volume: (summary && summary.volume) || w.total_volume_kg, lv: o.lv || 0, tier: o.tier || '',
-      lifts: lifts.map(function (l) { return {name: l.name, w: l.w, r: l.r, sets: l.sets}; }),
-      prs: ((summary && summary.prs) || []).map(function (p) { return p.ex + ' ' + kg(p.w) + ' kg × ' + p.r; })};
+    return cardFor(w, summary);
   }).catch(function () { return null; });
 }
 function shareSheet(summary) {
@@ -391,10 +477,11 @@ function init() {
   return Promise.all([Store.get('socialToken'), Store.get('socialMe')]).then(function (v) {
     token = v[0] || null; me = v[1] || null;
     renderHome();
-    if (token) api('GET', '/api/me').then(function (j) { remember(null, j.me); if (pendingInvite) acceptInvite(); }).catch(function () {});
+    Store.get('socialShare').then(function (x) { shareOn = x !== false; }, function () {});
+    if (token) api('GET', '/api/me').then(function (j) { remember(null, j.me); if (pendingInvite) acceptInvite(); setTimeout(sync, 1500); }).catch(function () {});
     else if (pendingInvite) whenQuiet(joinSheet);
   });
 }
-window.Social = {init: init, renderHome: renderHome, share: shareSheet, feed: feedSheet, friends: friendsSheet,
+window.Social = {sync: sync, init: init, renderHome: renderHome, share: shareSheet, feed: feedSheet, friends: friendsSheet,
   joined: function () { return !!token; }, enabled: enabled};
 })();

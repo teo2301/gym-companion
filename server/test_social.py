@@ -142,6 +142,16 @@ def main():
         check(call(base, "DELETE", "/api/comments/%s" % cm["comment"]["id"], token=A)[0] == 200, "owner deletes comment")
         check(call(base, "DELETE", "/api/posts/%s" % pid, token=B)[0] == 403, "friend can't delete my post")
 
+        prof = {"lv": 26, "tier": "Intermediate", "score": 2.6, "xp": 0.4, "muscles": [{"name": "Chest", "level": "Novice", "score": 1.2, "lift": "Bench"}],
+                "stats": {"workouts": 5, "volume": 1234, "streak_weeks": 2, "avg_week": 2.5, "since": "2026-01-01"},
+                "workouts": [{"title": "Push", "date": "2026-11-01", "minutes": 50, "sets": 12, "volume": 3000, "lifts": [{"name": "Bench", "w": 80, "r": 5, "sets": 3}]}]}
+        check(call(base, "PUT", "/api/me/profile", prof, token=B)[0] == 200, "profile snapshot saved")
+        s, r, _ = call(base, "GET", "/api/users/%s" % b_me["id"], token=A)
+        check(s == 200 and r["profile"]["lv"] == 26 and r["profile"]["workouts"][0]["title"] == "Push", "friend can view a profile")
+        check(call(base, "GET", "/api/users/%s" % b_me["id"], token=C)[0] == 404, "non-friend cannot view a profile")
+        call(base, "PUT", "/api/me/profile", {"lv": 9999, "workouts": [{"title": "x" * 500}]}, token=B)
+        check(call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"]["lv"] == 50, "profile values are clamped")
+        check(call(base, "DELETE", "/api/me/profile", token=B)[0] == 200 and call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"] is None, "profile can be withdrawn")
         old = b_me["code"]
         new = call(base, "POST", "/api/me/code", token=B)[1]["me"]["code"]
         check(new != old and call(base, "POST", "/api/friends", {"code": old}, token=C)[0] == 404, "reset code: old code dead")

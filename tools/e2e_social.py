@@ -161,6 +161,16 @@ def main():
         check("1" in acts.split("\n")[0] and acts.count("1") >= 2, "Alice sees 1 like and 1 comment (%r)" % acts)
         A.screenshot(path=SHOTS / "social-4-alice-feed.png")
 
+        # --- Bob opens Alice's profile: level + recent workouts
+        A.evaluate("Social.sync(true)"); A.wait_for_timeout(1500)
+        B.evaluate("closeSheet()"); B.wait_for_timeout(300); B.evaluate("Social.friends()")
+        B.wait_for_selector("#sList .sfn", timeout=8000); B.click("#sList .sfn")
+        B.wait_for_selector("#pv .pvnum", timeout=8000)
+        pv = B.inner_text("#pv")
+        check("Alice" in pv and "recent workouts" in pv.lower(), "Bob sees Alice's profile page (%r)" % pv[:80].replace("\n", " "))
+        check(B.locator("#pv .swk").count() >= 1, "Alice's recent workouts are listed")
+        B.screenshot(path=SHOTS / "social-5-bob-views-alice.png")
+
         # --- Bob unfriends: the post disappears for him
         B.evaluate("closeSheet()"); B.wait_for_timeout(300); B.evaluate("Social.friends()")
         B.wait_for_selector("#sList .sfr button", timeout=8000); B.click("#sList .sfr button"); B.wait_for_timeout(800)

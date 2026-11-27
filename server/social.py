@@ -65,6 +65,7 @@ ORIGINS = set(filter(None, os.environ.get("ORIGINS", ",".join([
 ])).split(",")))
 
 MAX_JSON = 16 * 1024
+MAX_PROFILE_JSON = 64 * 1024
 MAX_IMAGE = 8 * 1024 * 1024          # upload cap; the app resizes to ~1600px first, so ~0.3-1 MB
 PHOTO_PX, AVATAR_PX = 1600, 256
 MEDIA_TTL = 6 * 3600                 # signed media links last 6 h (feeds are refetched often)
@@ -115,6 +116,9 @@ def init_db():
       id TEXT PRIMARY KEY, post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       created INTEGER NOT NULL, text TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS profiles (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      data TEXT NOT NULL, updated INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
     """)
     if not con.execute("SELECT v FROM meta WHERE k='media_key'").fetchone():
@@ -223,6 +227,30 @@ def clean_workout(w):
             "lifts": lifts, "prs": [clean_text(p, 80) for p in (w.get("prs") or [])[:8] if p]}
 
 
+def clean_profile(b):
+    """Whitelist the profile snapshot (level, muscle levels, headline stats, recent workouts) friends can view."""
+    num = lambda v, lo, hi: max(lo, min(hi, float(v))) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+    muscles = []
+    for m in (b.get("muscles") or [])[:30]:
+        if isinstance(m, dict) and m.get("name"):
+            muscles.append({"name": clean_text(m["name"], 30), "level": clean_text(m.get("level"), 20),
+                            "score": round(num(m.get("score"), -1, 5), 2), "lift": clean_text(m.get("lift"), 60)})
+    st = b.get("stats") if isinstance(b.get("stats"), dict) else {}
+    workouts = []
+    for w in (b.get("workouts") or [])[:20]:
+        cw = clean_workout(w)
+        if cw:
+            cw["lifts"] = cw["lifts"][:6]
+            workouts.append(cw)
+    return {"lv": int(num(b.get("lv"), 0, 50)), "tier": clean_text(b.get("tier"), 20),
+            "score": round(num(b.get("score"), -1, 5), 3), "xp": round(num(b.get("xp"), 0, 1), 3),
+            "muscles": muscles,
+            "stats": {"workouts": int(num(st.get("workouts"), 0, 100000)), "volume": int(num(st.get("volume"), 0, 1e9)),
+                      "streak_weeks": int(num(st.get("streak_weeks"), 0, 1000)), "avg_week": round(num(st.get("avg_week"), 0, 50), 1),
+                      "since": clean_text(st.get("since"), 10)},
+            "workouts": workouts}
+
+
 def limited(key, kind):
     n, window = RATES[kind]
     now = time.monotonic()
@@ -310,9 +338,9 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(413, "too large")
         return self.rfile.read(n) if n else b""
 
-    def _json(self):
+    def _json(self, limit=MAX_JSON):
         try:
-            v = json.loads(self._body(MAX_JSON) or b"{}")
+            v = json.loads(self._body(limit) or b"{}")
             return v if isinstance(v, dict) else {}
         except ValueError:
             raise ApiError(400, "bad JSON")
@@ -444,6 +472,24 @@ class Handler(BaseHTTPRequestHandler):
             con.execute("UPDATE users SET avatar=? WHERE id=?", (name, uid))
             drop_media(me["avatar"])
             return 200, {"ok": True, "me": reload_me()}
+        if path == "/api/me/profile":
+            if method == "PUT":
+                prof = clean_profile(self._json(MAX_PROFILE_JSON))
+                con.execute("INSERT INTO profiles VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data, updated=excluded.updated",
+                            (uid, json.dumps(prof), now_ms()))
+                return 200, {"ok": True}
+            if method == "DELETE":
+                con.execute("DELETE FROM profiles WHERE user_id=?", (uid,))
+                return 200, {"ok": True}
+        m = re.fullmatch(r"/api/users/([0-9a-f]{16})", path)
+        if m and method == "GET":
+            u = con.execute("SELECT * FROM users WHERE id=?", (m.group(1),)).fetchone()
+            if not u or not are_friends(con, uid, u["id"]):
+                raise ApiError(404, "profile not found")
+            row = con.execute("SELECT data, updated FROM profiles WHERE user_id=?", (u["id"],)).fetchone()
+            nposts = con.execute("SELECT COUNT(*) FROM posts WHERE user_id=?", (u["id"],)).fetchone()[0]
+            return 200, {"ok": True, "user": user_json(u), "mine": u["id"] == uid, "posts": nposts,
+                         "profile": json.loads(row["data"]) if row else None, "updated": row["updated"] if row else None}
         if method == "POST" and path == "/api/me/code":
             con.execute("UPDATE users SET code=? WHERE id=?", (new_code(con), uid))
             return 200, {"ok": True, "me": reload_me()}

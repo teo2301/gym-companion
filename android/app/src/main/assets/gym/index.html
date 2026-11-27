@@ -1297,7 +1297,7 @@ function tierColour(x) { return !x ? EMPTY : x.level_index < 0 ? '#3a3f4a' : TIE
 
 function loadProgress(cb) {
   Store.progress().then(function (p) {
-    prog = p; renderLifter(); renderInsights(); if (bodyMode === 'week' || bodyMode === 'str') renderBody(); checkLevelUp(); if (cb) cb(p);
+    prog = p; renderLifter(); renderInsights(); if (bodyMode === 'week' || bodyMode === 'str') renderBody(); checkLevelUp(); if (window.Social && Social.sync) Social.sync(); if (cb) cb(p);
   }).catch(function () {});
 }
 
