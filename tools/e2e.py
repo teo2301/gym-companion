@@ -7,6 +7,7 @@ page error. Screenshots go to tools/shots/.
 
 Usage: <venv with playwright>/bin/python tools/e2e.py
 """
+import datetime as dt
 import functools
 import shutil
 import tempfile
@@ -131,6 +132,12 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     tiles = page.inner_text(".pgtiles")
     if "Workouts\n1" not in tiles:
         problems.append("progress tiles don't count the workout: %r" % tiles[:80])
+    if tiles.count("first 3M") != 6 or "vs the previous 3M" not in page.inner_text("#pgCmpNote"):
+        problems.append("tiles should say 'first 3M' with no earlier workouts: %r" % tiles)
+    page.click('#pgRange [data-r="all"]'); page.wait_for_timeout(300)
+    if "prev" in page.inner_text(".pgtiles") or "first" in page.inner_text(".pgtiles") or page.locator("#pgCmpNote").count():
+        problems.append("All period must not compare with a previous period")
+    page.click('#pgRange [data-r="3m"]'); page.wait_for_timeout(300)
     page.fill("#pgBwIn", "81.5"); page.click("#pgBwGo"); page.wait_for_timeout(800)
     if "81.5" not in page.inner_text("#pgn_bw"):
         problems.append("bodyweight log not shown")
@@ -283,6 +290,19 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     if page.evaluate("window.__pwned") or page.evaluate("GymPhoto.data().then(function (d) { return d.photos.length; })") != 0:
         problems.append("crafted photo data was not rejected")
     page.screenshot(path=SHOTS / f"{tag}-9-photo.png")
+
+    # ---- Compare with the previous period: 40 days later, the 1M tiles show the drop as text (arrow + %)
+    page.evaluate("closeSheet && closeSheet()"); page.wait_for_timeout(300)
+    page.clock.set_system_time(dt.datetime.now() + dt.timedelta(days=40))
+    page.locator("#openProg").scroll_into_view_if_needed(); page.click("#openProg")
+    page.wait_for_selector("#pg_train svg", timeout=10000)
+    page.click('#pgRange [data-r="1m"]'); page.wait_for_timeout(400)
+    tiles = page.inner_text(".pgtiles")
+    if tiles.count("▼ 100%") < 3 or "Workouts\n0\n" not in tiles:
+        problems.append("1M tiles 40 days later should read '▼ 100%%': %r" % tiles)
+    page.screenshot(path=SHOTS / f"{tag}-10-prev-period.png")
+    page.click('#pgRange [data-r="3m"]'); page.wait_for_timeout(300)
+    page.evaluate("GymBack()"); page.wait_for_timeout(300)
 
     print(f"{engine:9} {device:18} LV {lv} -> offline LV {lv_off}, workouts {len(sessions)}, "
           f"{n_ex} exercises, tone {page.evaluate('Lifter.tone()')}, problems {len(problems)}")

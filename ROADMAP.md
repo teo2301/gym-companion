@@ -3,7 +3,7 @@
 Goal: the best free progress tracking of any gym app. Each item ships on its own: built, tested
 (parity + e2e), released, installed. Tick the box when it is live. Work top to bottom.
 
-- [ ] **Compare with the previous period.** Every Progress tile shows the change vs the previous
+- [x] **Compare with the previous period.** Every Progress tile shows the change vs the previous
       period of the same length (e.g. "Volume 128k ▲ 12%"), with ▲/▼ text, not colour alone.
 - [ ] **Exercise detail upgrades.** (a) Its own period filter (default All). (b) Strength-standard
       reference lines on the estimated-1RM chart (Novice / Intermediate / Advanced / Elite thresholds

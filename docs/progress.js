@@ -24,6 +24,18 @@ function cutoff() {
   if (!r || !r[2]) return '0000-00-00';
   var d = new Date(); d.setDate(d.getDate() - r[2]); return dstr(d);
 }
+/* The previous period of the same length, [prevCut, cut). null for All (there is nothing before it). */
+function prevCutoff() {
+  var r = RANGES.filter(function (x) { return x[0] === range; })[0];
+  if (!r || !r[2]) return null;
+  var d = new Date(); d.setDate(d.getDate() - 2 * r[2]); return dstr(d);
+}
+/* "▲ 12%" / "▼ 5%" / "= same" vs the previous period: arrows + words, never colour alone. */
+function delta(now, before) {
+  if (!before) return now ? '▲ new' : '= same';
+  var p = Math.round(100 * (now - before) / before);
+  return p > 0 ? '▲ ' + p + '%' : p < 0 ? '▼ ' + (-p) + '%' : '= same';
+}
 
 /* ---------- styles */
 function styles() {
@@ -38,6 +50,8 @@ function styles() {
     '.pgtiles div{background:var(--card);border-radius:16px;padding:11px 12px;min-width:0}',
     '.pgtiles small{display:block;color:var(--dim);font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.pgtiles b{display:block;font-size:22px;font-weight:800;margin-top:2px;white-space:nowrap}.pgtiles em{display:block;font-style:normal;color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.pgtiles i{display:block;font-style:normal;font-weight:700;color:var(--text);font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '#pgCmpNote{margin:-4px 0 12px;font-size:12px}',
     '.pgcard{background:var(--card);border-radius:20px;padding:14px 14px 12px;margin-bottom:12px}',
     '.pgch{display:flex;align-items:center;gap:8px;margin-bottom:4px}.pgch h3{margin:0;font-size:17px;flex:1}',
     '.pgtab{height:30px;padding:0 10px;border-radius:9px;background:var(--card2);color:var(--dim);font-size:12.5px;font-weight:700}.pgtab.on{color:var(--volt)}',
@@ -150,14 +164,36 @@ function render() {
   var vol = W.reduce(function (a, w) { return a + w.volume; }, 0), sets = W.reduce(function (a, w) { return a + w.sets; }, 0);
   var mins = W.reduce(function (a, w) { return a + (w.minutes || 0); }, 0);
   var lvNow = pr && pr.overall ? pr.overall.lv : 0, lvThen = LW.length ? LW[0].lv : lvNow, dlv = lvNow - lvThen;
+  var pcut = prevCutoff(), rlab = RANGES.filter(function (r) { return r[0] === range; })[0][1];
+  var PW = pcut ? st.workouts.filter(function (w) { return w.date >= pcut && w.date < cut; }) : [];
+  var PP = pcut ? st.prs.filter(function (p) { return p.date >= pcut && p.date < cut; }).length : 0;
+  var hasPrev = pcut && st.workouts.some(function (w) { return w.date < cut; });
+  function sum(L, k) { return L.reduce(function (a, w) { return a + (w[k] || 0); }, 0); }
+  /* Level: how much the level moved during the previous period (levels, not %). */
+  function lvCmp() {
+    if (!pcut) return '';
+    if (!hasPrev) return '<i title="No workouts before this period">first ' + rlab + '</i>';
+    var PL = weeksAll.filter(function (w) { return w.week >= monday(pcut) && w.week < monday(cut); });
+    var d = PL.length ? lvThen - PL[0].lv : 0;
+    return '<i title="Level change in the previous ' + rlab + '">' + (d > 0 ? '▲ ' + d + ' prev ' + rlab : d < 0 ? '▼ ' + (-d) + ' prev ' + rlab : '± 0 prev ' + rlab) + '</i>';
+  }
+  function cmp(now, before, fmt) {
+    if (!pcut) return '';
+    if (!hasPrev) return '<i title="No workouts before this period">first ' + rlab + '</i>';
+    return '<i title="Previous ' + rlab + ': ' + e(fmt ? fmt(before) : before) + '">' + delta(now, before) + '</i>';
+  }
 
   var html = '<div class="pgtiles">' +
-    tile('Workouts', W.length, (Math.round(10 * W.length / spanWeeks) / 10) + ' a week') +
-    tile('Volume', big(vol) + '<span style="font-size:13px;color:var(--dim)"> kg</span>', W.length ? big(vol / W.length) + ' kg each' : '–') +
-    tile('Sets', big(sets), W.length ? Math.round(sets / W.length) + ' each' : '–') +
-    tile('Time', mins >= 600 ? Math.round(mins / 60) + ' h' : mins + ' min', W.length && mins ? Math.round(mins / W.length) + ' min each' : '–') +
-    tile('PRs', P.length, P.length ? 'latest ' + niceDate(P[P.length - 1].date).replace(/ \d{4}$/, '') : 'keep pushing') +
-    tile('Level', 'LV ' + lvNow, dlv > 0 ? '▲ ' + dlv + ' this period' : dlv < 0 ? '▼ ' + (-dlv) + ' this period' : 'no change') + '</div>';
+    tile('Workouts', W.length, (Math.round(10 * W.length / spanWeeks) / 10) + ' a week', cmp(W.length, PW.length)) +
+    tile('Volume', big(vol) + '<span style="font-size:13px;color:var(--dim)"> kg</span>', W.length ? big(vol / W.length) + ' kg each' : '–',
+      cmp(vol, sum(PW, 'volume'), function (v) { return big(v) + ' kg'; })) +
+    tile('Sets', big(sets), W.length ? Math.round(sets / W.length) + ' each' : '–', cmp(sets, sum(PW, 'sets'))) +
+    tile('Time', mins >= 600 ? Math.round(mins / 60) + ' h' : mins + ' min', W.length && mins ? Math.round(mins / W.length) + ' min each' : '–',
+      cmp(mins, sum(PW, 'minutes'), function (v) { return v + ' min'; })) +
+    tile('PRs', P.length, P.length ? 'latest ' + niceDate(P[P.length - 1].date).replace(/ \d{4}$/, '') : 'keep pushing', cmp(P.length, PP)) +
+    tile('Level', 'LV ' + lvNow, dlv > 0 ? '▲ ' + dlv + ' this period' : dlv < 0 ? '▼ ' + (-dlv) + ' this period' : 'no change',
+      lvCmp()) + '</div>';
+  if (pcut) html += '<p class="pgsub" id="pgCmpNote">▲▼ = change vs the previous ' + rlab + '.</p>';
 
   html += card('train', 'Training per week', null, '<div class="pgseg" id="pgMetric">' +
     [['volume', 'Volume'], ['sets', 'Sets'], ['workouts', 'Workouts'], ['minutes', 'Time']].map(function (m) {
@@ -295,7 +331,7 @@ function render() {
 }
 var tableOn = {};
 function isTable(id) { return !!tableOn[id]; }
-function tile(k, v, sub) { return '<div><small>' + k + '</small><b class="num">' + v + '</b><em>' + sub + '</em></div>'; }
+function tile(k, v, sub, cmp) { return '<div><small>' + k + '</small><b class="num">' + v + '</b><em>' + sub + '</em>' + (cmp || '') + '</div>'; }
 function rowClick(ev) { var r = ev.target.closest && ev.target.closest('[data-ex]'); if (r) { buzz(); exerciseSheet(r.getAttribute('data-ex')); } }
 
 /* weekly buckets across the period (monthly when the period is long), zero-filled */
