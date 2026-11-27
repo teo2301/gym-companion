@@ -198,7 +198,9 @@ function joinSheet() {
     '<p class="sub" style="margin-bottom:12px">Pick the name friends will see. Your workouts stay private until you choose to share one.</p>' +
     '<input class="txt" id="sName" maxlength="30" placeholder="Your name" autocomplete="nickname">' +
     photoPicker('sAva', '📷 Profile photo (optional)') +
-    '<button class="log" id="sGo">Join</button>');
+    '<button class="log" id="sGo">Join</button>' +
+    '<button class="finish" id="sHave">I already have an account (recovery key)</button>');
+  $('sHave').onclick = function () { recoverSheet(); };
   wirePicker('sAva', true, function (b) { blob = b; });
   $('sGo').onclick = function () {
     var name = $('sName').value.trim(); if (!name) { toast('Pick a name'); return; }
@@ -208,7 +210,7 @@ function joinSheet() {
       return blob ? api('PUT', '/api/me/avatar', undefined, blob).then(function (k) { remember(null, k.me); }) : null;
     }).then(function () {
       closeSheet(); toastOk('Welcome, ' + me.name); renderHome();
-      if (pendingInvite) setTimeout(acceptInvite, 300); else setTimeout(friendsSheet, 300);
+      if (pendingInvite) setTimeout(acceptInvite, 300); else setTimeout(recoveryKeySheet, 300);
     }).catch(function (err) { toast(err.message); $('sGo').disabled = false; });
   };
 }
@@ -220,6 +222,7 @@ function profileSheet() {
     (owner && window.GYM_PUBLIC ? '<label class="stog"><input type="checkbox" id="sUseSrv"' + (Store.remote ? ' checked' : '') + '><span>Use my server (watch live link, dashboards)</span></label>' : '') +
     '<label class="stog"><input type="checkbox" id="sShareProf"' + (shareOn ? ' checked' : '') + '><span>Let friends see my level and recent workouts</span></label>' +
     '<button class="log" id="sSaveP">Save</button>' +
+    '<button class="finish" id="sRecov">🔑 Recovery key (keeps your friends if you lose your login)</button>' +
     '<button class="finish" id="sReset">Get a new friend code</button>' +
     '<button class="danger" id="sDelAcc">Delete my account and all my posts</button>');
   wirePicker('sAva2', true, function (b) { blob = b; });
@@ -234,6 +237,7 @@ function profileSheet() {
     if (blob) jobs.push(api('PUT', '/api/me/avatar', undefined, blob).then(function (j) { remember(null, j.me); }));
     Promise.all(jobs).then(function () { if (srvChange) { location.reload(); return; } closeSheet(); toastOk('Profile saved'); renderHome(); }).catch(function (err) { toast(err.message); });
   };
+  $('sRecov').onclick = function () { recoveryKeySheet(); };
   $('sReset').onclick = function () {
     if (!confirm('Make a new friend code? Your old code and invite links stop working (current friends stay).')) return;
     api('POST', '/api/me/code').then(function (j) { remember(null, j.me); toastOk('New code: ' + j.me.code); friendsSheet(); }).catch(function (err) { toast(err.message); });
@@ -241,6 +245,31 @@ function profileSheet() {
   $('sDelAcc').onclick = function () {
     if (!confirm('Delete your friends account? All your posts, photos, likes and comments are removed for good. Your workouts in this app are NOT affected.')) return;
     api('DELETE', '/api/me').then(function () { closeSheet(); forget(); toastOk('Account deleted'); }).catch(function (err) { toast(err.message); });
+  };
+}
+
+/* ---------- recovery: a lost login must never mean lost friends */
+function recoveryKeySheet() {
+  openSheet('<h2 style="margin:0 0 4px;font-size:24px">Your recovery key</h2>' +
+    '<p class="sub" style="margin-bottom:10px">Save this somewhere safe (notes app, password manager). If you ever lose your login — new phone, cleared data — enter it on the Join screen and you get your friends, posts and profile back. Making a new key replaces the old one.</p>' +
+    '<div class="scode" id="sKey" style="font-size:19px">…</div>' +
+    '<div class="sbtns"><button class="pri" id="sKeyCopy">Copy key</button><button id="sKeyDone">Done</button></div>');
+  $('sKeyDone').onclick = function () { closeSheet(); setTimeout(friendsSheet, 250); };
+  api('POST', '/api/me/recovery').then(function (j) {
+    $('sKey').textContent = j.key; $('sKeyCopy').onclick = function () { copy(j.key); };
+  }).catch(function (err) { toast(err.message); });
+}
+function recoverSheet() {
+  openSheet('<h2 style="margin:0 0 4px;font-size:24px">Get your account back</h2>' +
+    '<p class="sub" style="margin-bottom:12px">Enter the recovery key you saved (Friends → Profile → Recovery key).</p>' +
+    '<input class="txt" id="sRk" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off" autocapitalize="characters">' +
+    '<button class="log" id="sRkGo">Sign in</button>');
+  $('sRkGo').onclick = function () {
+    var btn = this; btn.disabled = true;
+    api('POST', '/api/recover', {key: $('sRk').value}).then(function (j) {
+      remember(j.token, j.me); closeSheet(); toastOk('Welcome back, ' + j.me.name); renderHome(); setTimeout(friendsSheet, 300);
+      setTimeout(function () { sync(true); }, 800);
+    }).catch(function (err) { toast(err.message); btn.disabled = false; });
   };
 }
 

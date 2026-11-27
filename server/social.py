@@ -125,6 +125,10 @@ def init_db():
       data TEXT NOT NULL, updated INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
     """)
+    try:
+        con.execute("ALTER TABLE users ADD COLUMN recovery_hash TEXT")   # recovery key (hashed), see /api/recover
+    except sqlite3.OperationalError:
+        pass
     if not con.execute("SELECT v FROM meta WHERE k='media_key'").fetchone():
         con.execute("INSERT INTO meta VALUES ('media_key', ?)", (secrets.token_hex(32),))
     con.close()
@@ -414,7 +418,7 @@ class Handler(BaseHTTPRequestHandler):
             if method == "GET" and path == "/health":
                 return self._send(200, {"ok": True})
             kind = "read" if method == "GET" else ("upload" if method == "PUT" else "write")
-            if path == "/api/register":
+            if path in ("/api/register", "/api/recover"):
                 kind = "register"
             if limited(self._ip(), kind):
                 raise ApiError(429, "slow down")
@@ -485,6 +489,15 @@ class Handler(BaseHTTPRequestHandler):
             return 200, {"ok": True, "token": token,
                          "me": user_json(con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone(), me=True)}
 
+        if method == "POST" and path == "/api/recover":
+            key = re.sub(r"[^A-Z0-9]", "", str(self._json().get("key") or "").upper())
+            u = con.execute("SELECT * FROM users WHERE recovery_hash=?", (hashlib.sha256(key.encode()).hexdigest(),)).fetchone() if len(key) >= 20 else None
+            if not u:
+                raise ApiError(404, "that recovery key isn't right")
+            token = secrets.token_urlsafe(32)          # new login for this device; friends, posts and profile are untouched
+            con.execute("UPDATE users SET token_hash=?, last_seen=? WHERE id=?", (hashlib.sha256(token.encode()).hexdigest(), now_ms(), u["id"]))
+            return 200, {"ok": True, "token": token, "me": user_json(con.execute("SELECT * FROM users WHERE id=?", (u["id"],)).fetchone(), me=True)}
+
         me = self._user(con)
         uid = me["id"]
         reload_me = lambda: user_json(con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone(), me=True)
@@ -529,6 +542,10 @@ class Handler(BaseHTTPRequestHandler):
                 return 200, {"ok": True, "count": len(sess)}
             if method == "GET":
                 return 200, {"ok": True, "sessions": json.loads(f.read_text())["sessions"] if f.exists() else []}
+        if method == "POST" and path == "/api/me/recovery":
+            raw = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(20))
+            con.execute("UPDATE users SET recovery_hash=? WHERE id=?", (hashlib.sha256(raw.encode()).hexdigest(), uid))
+            return 200, {"ok": True, "key": "-".join(raw[i:i + 5] for i in range(0, 20, 5))}
         if path == "/api/me/profile":
             if method == "PUT":
                 prof = clean_profile(self._json(MAX_PROFILE_JSON))

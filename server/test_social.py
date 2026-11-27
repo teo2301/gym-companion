@@ -173,6 +173,13 @@ def main():
         check(s == 200 and r["method"] == "POST" and '"ops"' in r["body"], "owner proxy forwards POST bodies")
         check(call(base, "GET", "/api/owner/srv/plan", token=A)[0] == 403 and call(base, "GET", "/api/owner/srv/plan")[0] == 401, "proxy refuses non-owners and anonymous")
         check(call(base, "GET", "/api/owner/srv/restore", token=B)[0] == 404, "proxy only forwards whitelisted calls")
+        s, r, _ = call(base, "POST", "/api/me/recovery", token=C); key = r["key"]
+        check(s == 200 and len(key.replace("-", "")) == 20, "recovery key issued")
+        s, r, _ = call(base, "POST", "/api/recover", {"key": key.lower()})
+        check(s == 200 and call(base, "GET", "/api/me", token=r["token"])[0] == 200, "recovery key signs a new device in as the same account")
+        check(call(base, "GET", "/api/me", token=C)[0] == 401, "the old login stops working after recovery")
+        C = r["token"]
+        check(call(base, "POST", "/api/recover", {"key": "AAAAA-AAAAA-AAAAA-AAAAA"})[0] == 404 and call(base, "POST", "/api/recover", {"key": ""})[0] == 404, "wrong recovery key refused")
         old = b_me["code"]
         new = call(base, "POST", "/api/me/code", token=B)[1]["me"]["code"]
         check(new != old and call(base, "POST", "/api/friends", {"code": old}, token=C)[0] == 404, "reset code: old code dead")
