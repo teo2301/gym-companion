@@ -41,4 +41,4 @@ Privacy policy: <https://teo2301.github.io/gym-companion/privacy.html>
 
 1. `tools/build.sh --apk` (bump `versionCode`/`versionName` in `android/app/build.gradle.kts` first).
 2. `<venv with playwright>/bin/python tools/e2e.py` → `E2E OK`.
-3. Commit + push (Pages redeploys `docs/`), then create a GitHub release with BOTH `release/gym-companion-<version>.apk` and `release/gym-companion.apk` (the stable link needs the second).
+3. Commit + push (Pages redeploys `docs/`), then create the GitHub release with ONE file, `"release/gym-companion.apk#Gym Companion (v<version>, released <date>)"` (fixed name for the permanent link, label shows version + date), and delete the previous release.
