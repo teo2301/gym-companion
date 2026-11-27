@@ -453,7 +453,8 @@ function overall(levels) {
 
 /* ---------- session normalisation (live CSV shapes -> one shape) ---------- */
 
-function canonSets(raw, warmDone) {
+// warmList = the planned warm-up sets that warmDone indexes into (live sessions); as gym_api._write_csv
+function canonSets(raw, warmDone, warmList) {
   var out = [], i, x;
   for (i = 0; i < asArray(raw).length; i++) {
     x = raw[i];
@@ -465,7 +466,7 @@ function canonSets(raw, warmDone) {
   }
   var wd = asArray(warmDone).slice().sort(function (a, b) { return a - b; });
   for (i = 0; i < wd.length; i++) {
-    var k = +wd[i], w = asArray(raw)[k];
+    var k = +wd[i], w = asArray(warmList)[k];
     if (w) out.push({weight_kg: setW(w), reps: setR(w), set_type: 'warmup', distance_km: 0,
       set_index: k, duration_seconds: 0, rpe: null, t: null, pr: null});
   }
@@ -482,7 +483,7 @@ function normalizeSession(s) {
     for (var i = 0; i < s.exercises.length; i++) {
       var e = s.exercises[i];
       if (!e || !e.name) continue;
-      ex[e.name] = canonSets(e.done || [], e.warm_done || []);
+      ex[e.name] = canonSets(e.done || [], e.warm_done || [], e.warmup || []);
     }
   } else {
     for (name in (s.exercises || {})) {

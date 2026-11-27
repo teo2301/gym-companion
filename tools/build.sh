@@ -63,5 +63,8 @@ if [ "${1:-}" = "--apk" ]; then
   APKSIGNER=$(ls -d $HOME/android-sdk/build-tools/*/ | sort -V | tail -1)apksigner
   "$APKSIGNER" verify --print-certs "$ROOT/release/gym-companion-$VERSION.apk" 2>/dev/null \
     | grep -m1 'SHA-256' || { echo "APK NOT SIGNED" >&2; exit 1; }
-  echo "apk: release/gym-companion-$VERSION.apk"
+  # Stable name too: https://github.com/teo2301/gym-companion/releases/latest/download/gym-companion.apk
+  # always serves the newest release, as long as every release also uploads this file.
+  cp "$ROOT/release/gym-companion-$VERSION.apk" "$ROOT/release/gym-companion.apk"
+  echo "apk: release/gym-companion-$VERSION.apk (+ release/gym-companion.apk)"
 fi

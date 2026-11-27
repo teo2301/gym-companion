@@ -8,6 +8,8 @@ page error. Screenshots go to tools/shots/.
 Usage: <venv with playwright>/bin/python tools/e2e.py
 """
 import functools
+import shutil
+import tempfile
 import http.server
 import json
 import sys
@@ -20,11 +22,15 @@ ROOT = Path(__file__).resolve().parent.parent
 DOCS, SHOTS = ROOT / "docs", ROOT / "tools" / "shots"
 
 
+SITE = Path(tempfile.mkdtemp(prefix="gym-e2e-"))   # a copy of docs/, so the update test can change it
+
+
 def serve() -> tuple[http.server.ThreadingHTTPServer, str]:
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *a):
             pass
-    handler = functools.partial(Quiet, directory=str(DOCS))
+    shutil.copytree(DOCS, SITE, dirs_exist_ok=True)
+    handler = functools.partial(Quiet, directory=str(SITE))
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, f"http://localhost:{srv.server_address[1]}/"
@@ -106,6 +112,20 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     tap(page, "#homeBtn")
     page.wait_for_timeout(1500)
 
+    # Edit the finished workout from Recent workouts: change reps, add a set, save
+    page.locator("#workouts .wcard").first.scroll_into_view_if_needed()
+    page.locator("#workouts .wcard").first.click()
+    page.wait_for_selector("#wSave", state="visible", timeout=5000)
+    page.locator('#wBody input[data-k="r"]').first.fill("12")
+    page.locator('#wBody [data-a="aset"]').first.click()
+    page.screenshot(path=SHOTS / f"{tag}-4b-edit-workout.png")
+    tap(page, "#wSave")
+    page.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=5000)
+    wk = page.evaluate("Store.workouts().then(function (l) { return Store.workout(l[0].id); })")
+    first = wk["exercises"][0]["sets"]
+    if not any(x["r"] == 12 for x in first) or wk["total_sets"] < 2:
+        problems.append(f"workout edit did not stick: {wk}")
+
     # Preset library: the add-exercise picker must offer the common lifts with no custom setup
     n_ex = page.evaluate("Store.plan().then(function (p) { return p.exercises.length; })")
     if n_ex < 150:
@@ -153,6 +173,22 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
         problems.append("skin tone lost offline")
     page.screenshot(path=SHOTS / f"{tag}-5-offline.png")
     ctx.set_offline(False)
+    if page.evaluate("Store.workouts().then(function (l) { return l.length; })") != 1:
+        problems.append("workout missing after offline reload")
+
+    # A new version is published while the app is open: the update pill appears, Update keeps the data
+    sw = SITE / "sw-public.js"
+    sw.write_text(sw.read_text().replace("var CACHE = 'gym-public-", "var CACHE = 'gym-public-next-"))
+    page.reload()
+    page.wait_for_selector("#updPill", state="visible", timeout=20000)
+    page.screenshot(path=SHOTS / f"{tag}-6-update.png")
+    page.click('#updPill [data-a="go"]')
+    page.wait_for_function("window.Store && document.getElementById('lvNum').textContent.trim() !== '–'", timeout=10000)
+    page.wait_for_timeout(500)
+    after = page.evaluate("Store.workouts().then(function (l) { return l.length ? Store.workout(l[0].id) : null; })")
+    if not after or not any(x["r"] == 12 for x in after["exercises"][0]["sets"]):
+        problems.append("data (or the edit) lost after updating")
+    shutil.copy(DOCS / "sw-public.js", sw)   # next engine starts from the real build
 
     print(f"{engine:9} {device:18} LV {lv} -> offline LV {lv_off}, workouts {len(sessions)}, "
           f"{n_ex} exercises, tone {page.evaluate('Lifter.tone()')}, problems {len(problems)}")

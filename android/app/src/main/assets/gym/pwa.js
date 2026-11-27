@@ -39,7 +39,35 @@ function watchWorkout() {
 /* ---------- public web app: offline cache + storage */
 function registerOffline() {
   if (!PUBLIC || IN_SHELL || !('serviceWorker' in navigator) || !window.isSecureContext) return;
-  navigator.serviceWorker.register('sw-public.js').catch(function () {});
+  // An update that arrives while the app is open: offer a one-tap reload. Data lives in IndexedDB, so
+  // reloading is safe even mid-workout. Skipped on the very first install (nothing was controlling yet).
+  var hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (hadController) updateReady();
+    hadController = true;
+  });
+  navigator.serviceWorker.register('sw-public.js').then(function (reg) {
+    document.addEventListener('visibilitychange', function () {   // Home Screen apps resume rather than reload
+      if (document.visibilityState === 'visible') reg.update().catch(function () {});
+    });
+  }).catch(function () {});
+}
+function updateReady() {
+  if (document.getElementById('updPill')) return;
+  var d = document.createElement('div');
+  d.id = 'updPill';
+  d.setAttribute('style', 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));' +
+    'z-index:85;display:flex;align-items:center;gap:4px;background:#d7ff3e;color:#0c0e12;border-radius:22px;' +
+    'box-shadow:0 8px 24px rgba(0,0,0,.5);font:600 15px system-ui,-apple-system,sans-serif;white-space:nowrap');
+  d.innerHTML = '<button data-a="go" style="border:0;background:none;color:inherit;font:inherit;padding:11px 4px 11px 18px">' +
+    'New version ready \u00b7 <u>Update</u></button><button data-a="x" aria-label="Later" style="border:0;background:none;' +
+    'color:inherit;font:inherit;padding:11px 16px 11px 8px">\u2715</button>';
+  d.onclick = function (e) {
+    var a = e.target.closest ? (e.target.closest('[data-a]') || {}).getAttribute && e.target.closest('[data-a]').getAttribute('data-a') : null;
+    if (a === 'go') location.reload();
+    else if (a === 'x') d.parentNode.removeChild(d);
+  };
+  document.body.appendChild(d);
 }
 function persistStorage() {
   if (!PUBLIC || IN_SHELL || !navigator.storage || !navigator.storage.persist) return;

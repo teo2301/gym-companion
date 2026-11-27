@@ -103,6 +103,10 @@ function sessionPut(s) {
   return idb('sessions', 'readwrite', function (st) { return st.put(clone(s)); })
     .catch(function () { _noIdb = true; return sessionPut(s); });
 }
+function sessionDelete(id) {
+  if (_noIdb) { mem().sessions = mem().sessions.filter(function (x) { return x.id !== id; }); memSave(); return Promise.resolve(); }
+  return idb('sessions', 'readwrite', function (s) { return s.delete(id); });
+}
 function sessionsClear() {
   if (_noIdb) { mem().sessions = []; memSave(); return Promise.resolve(); }
   return idb('sessions', 'readwrite', function (s) { return s.clear(); })
@@ -317,6 +321,57 @@ function makePublic(c) {
     });
   };
   store.live = function () { return kvGet('live').then(stateOut); };
+
+  /* ---------- past workouts: list, open, edit, delete (all on-device) */
+  function workoutJson(raw) {
+    var n = core().normalizeSession(raw), exs = [], vol = 0, sets = 0;
+    Object.keys(n.exercises).forEach(function (name) {
+      var ss = n.exercises[name].map(function (x) { vol += x.weight_kg * x.reps; sets++; return {w: x.weight_kg, r: x.reps, type: x.set_type === 'warmup' ? 'warmup' : 'normal'}; });
+      // warm-ups first, as they were done
+      ss.sort(function (a, b) { return (a.type === 'warmup' ? 0 : 1) - (b.type === 'warmup' ? 0 : 1); });
+      if (ss.length) exs.push({name: name, sets: ss});   // routine exercises that were never done aren't part of it
+    });
+    return {id: raw.id, source: 'device', editable: true, title: n.title, date_str: n.date_str, start: n.start,
+      duration_min: n.duration_min, total_sets: sets, total_volume_kg: Math.round(vol), exercises: exs};
+  }
+  store.workouts = function () {
+    return sessionsAll().then(function (all) {
+      return asArray(all).filter(function (s) { return s && s.id; }).map(function (s) {
+        var w = workoutJson(s); delete w.exercises; return w;
+      }).sort(function (a, b) { return b.start - a.start; });
+    });
+  };
+  store.workout = function (id) {
+    return sessionsAll().then(function (all) {
+      var raw = asArray(all).filter(function (s) { return s && s.id === id; })[0];
+      return raw ? workoutJson(raw) : Promise.reject(new Error('workout not found'));
+    });
+  };
+  store.saveWorkout = function (id, edit) {
+    return sessionsAll().then(function (all) {
+      var raw = asArray(all).filter(function (s) { return s && s.id === id; })[0];
+      if (!raw) return {ok: false, error: 'workout not found'};
+      var n = core().normalizeSession(raw), ex = {}, any = false;
+      asArray(edit && edit.exercises).forEach(function (e) {
+        var name = String((e && e.name) || '').trim().slice(0, 80); if (!name) return;
+        var sets = asArray(e.sets).map(function (x, i) {
+          return {weight_kg: Math.max(0, Math.min(1000, num(x.w))), reps: Math.max(0, Math.min(1000, Math.round(num(x.r)))),
+            set_type: x.type === 'warmup' ? 'warmup' : 'normal', set_index: i};
+        }).filter(function (x) { return x.reps > 0; });
+        if (sets.length) { ex[name] = (ex[name] || []).concat(sets); any = true; }
+      });
+      if (!any) return {ok: false, error: 'A workout needs at least one set \u2014 delete it instead'};
+      // canonical (Hevy-like) shape; same id, start and end, so history order and identity are kept
+      var saved = {id: raw.id, title: String((edit && edit.title) || n.title).trim().slice(0, 60) || n.title,
+        start: n.start, end: n.end, date_str: n.date_str, exercises: ex, savedAt: raw.savedAt || Date.now(), editedAt: Date.now()};
+      return sessionPut(saved).then(function () { return refreshCache(c); })
+        .then(function () { return store.snapshot(); }).then(function () { return {ok: true, id: raw.id}; });
+    });
+  };
+  store.deleteWorkout = function (id) {
+    return sessionDelete(id).then(function () { return refreshCache(c); })
+      .then(function () { return store.snapshot(); }).then(function () { return {ok: true}; });
+  };
   store.history = function (name) {
     return refreshCache(c).then(function () {
       return core().history(name, {sessions: c.sessions, notes: c.notes, custom: c.custom});
@@ -552,6 +607,15 @@ function makePrivate() {
     return postJson('../api/gym/op', body);
   };
   store.history = function (name) { return fetchJson('../api/gym/history?name=' + encodeURIComponent(name || '')); };
+  store.workouts = function () { return fetchJson('../api/gym/workouts'); };
+  store.workout = function (id) { return fetchJson('../api/gym/workouts?id=' + encodeURIComponent(id)); };
+  // read the JSON even on 4xx, so the server's reason (e.g. Hevy imports are read-only) reaches the user
+  function postWorkout(body) {
+    return fetch('../api/gym/workout', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+      .then(function (r) { return r.json().catch(function () { return {ok: false, error: 'HTTP ' + r.status}; }); });
+  }
+  store.saveWorkout = function (id, edit) { return postWorkout({id: id, title: edit.title, exercises: edit.exercises}); };
+  store.deleteWorkout = function (id) { return postWorkout({id: id, delete: true}); };
   store.note = function (name, text) { return postJson('../api/gym/note', {name: name, text: text}); };
   store.routine = function (payload) { return postJson('../api/gym/routine', payload); };
   store.customExercise = function (payload) { return postJson('../api/gym/custom', payload); };

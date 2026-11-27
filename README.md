@@ -11,7 +11,8 @@ whenever you like (JSON for restore, CSV for spreadsheets).
 
 - **iPhone (and any browser):** open <https://teo2301.github.io/gym-companion/> in Safari, then
   **Share → Add to Home Screen**. It runs full-screen and works offline.
-- **Android:** download the APK from [Releases](https://github.com/teo2301/gym-companion/releases).
+- **Android:** download the latest APK: <https://github.com/teo2301/gym-companion/releases/latest/download/gym-companion.apk>
+  (this link always gives the newest version; install it over the old one to update, your data is kept).
 
 Privacy policy: <https://teo2301.github.io/gym-companion/privacy.html>
 
@@ -29,4 +30,4 @@ Privacy policy: <https://teo2301.github.io/gym-companion/privacy.html>
 
 1. `tools/build.sh --apk` (bump `versionCode`/`versionName` in `android/app/build.gradle.kts` first).
 2. `<venv with playwright>/bin/python tools/e2e.py` → `E2E OK`.
-3. Commit + push (Pages redeploys `docs/`), then attach `release/gym-companion-<version>.apk` to a GitHub release.
+3. Commit + push (Pages redeploys `docs/`), then create a GitHub release with BOTH `release/gym-companion-<version>.apk` and `release/gym-companion.apk` (the stable link needs the second).
