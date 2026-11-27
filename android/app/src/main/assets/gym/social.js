@@ -501,7 +501,7 @@ function init() {
   if (m) pendingInvite = m[1].toUpperCase();
   if (!enabled()) { renderHome(); return Promise.resolve(); }
   var lg = location.hash.match(/social-login=([A-Za-z0-9_-]{20,80})/), loginP = Promise.resolve();
-  if (lg && !window.GYM_PUBLIC) {   // owner's private build only: restore a friends login from a one-off link
+  if (lg) {   // restore a friends login from a one-off link (keep that link private)
     try { history.replaceState(null, '', location.pathname + location.search); } catch (err) {}
     loginP = Promise.all([Store.set('socialToken', lg[1]), Store.set('socialMe', null)]);
   }
