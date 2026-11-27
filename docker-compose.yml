@@ -1,0 +1,23 @@
+# Gym Companion social API (friends + workout posts). Localhost only; published under the existing
+# Funnel :10000 at path /gs:   tailscale funnel --bg --https=10000 --set-path=/gs http://127.0.0.1:8196
+# Start/update:  docker compose up -d --build gym-social      (from this folder)
+services:
+  gym-social:
+    build: ./server
+    image: gym-social:v1
+    container_name: gym-social
+    restart: unless-stopped
+    user: "1000:1000"
+    ports:
+      - "127.0.0.1:8196:8000"
+    volumes:
+      - ./server:/app:ro
+      - ./data:/data                 # social.db + media/ (gitignored, backed up nightly)
+    env_file:
+      - path: ./social.env           # extra allowed app origins (private copies); gitignored, optional
+        required: false
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 256m

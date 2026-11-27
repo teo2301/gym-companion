@@ -202,7 +202,8 @@ function parseAppDate(s) {
   return new Date(+m[3], mi, +m[1], +m[4], +m[5]).getTime();
 }
 function weekStart(ms) {
-  var d = new Date(ms); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - d.getDay()); return d.getTime();
+  // Monday-based weeks, like Python's weekday() (getDay() is 0 on Sunday)
+  var d = new Date(ms); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return d.getTime();
 }
 function setW(x) { return num(has(x, 'weight_kg') ? x.weight_kg : x.w, 0); }
 function setR(x) { return num(has(x, 'reps') ? x.reps : x.r, 0); }
@@ -561,10 +562,34 @@ function weekStats(sessions) {
     if (sessions[i].start >= monday && !SKIP_TITLES.test(sessions[i].title)) wk.push(sessions[i]);
     if (!SKIP_TITLES.test(sessions[i].title) && (!last || sessions[i].start > last.start)) last = sessions[i];
   }
-  return {workouts: wk.length,
+  var out = {workouts: wk.length,
     sets: wk.reduce(function (a, s) { return a + num(s.total_sets); }, 0),
     volume: rnd(wk.reduce(function (a, s) { return a + num(s.total_volume_kg); }, 0)),
     last_date: last ? last.date_str : null, last_title: last ? last.title : null};
+  var r = weekRhythm(sessions.filter(function (s) { return !SKIP_TITLES.test(s.title); }), monday, wk.length);
+  for (var k in r) if (has(r, k)) out[k] = r[k];
+  return out;
+}
+// Weekly averages over COMPLETE Mon-Sun weeks, only weeks since the first workout. Mirrors gym_api._week_rhythm.
+function weekRhythm(counted, monday, thisWeek) {
+  var weeks = [], k, i;
+  for (k = 12; k >= 1; k--) {
+    var d0 = new Date(monday); d0.setDate(d0.getDate() - 7 * k);
+    var d1 = new Date(d0); d1.setDate(d1.getDate() + 7);
+    var ss = counted.filter(function (s) { return s.start >= d0.getTime() && s.start < d1.getTime(); });
+    weeks.push({week: dateStr(d0), workouts: ss.length, sets: ss.reduce(function (a, s) { return a + num(s.total_sets); }, 0)});
+  }
+  var first = null;
+  for (i = 0; i < counted.length; i++) if (first === null || counted[i].start < first) first = counted[i].start;
+  var firstWeek = first === null ? null : dateStr(new Date(weekStart(first)));
+  function avg(n, key) {
+    var span = weeks.slice(-n).filter(function (w) { return firstWeek !== null && w.week >= firstWeek; });
+    return span.length ? Math.round(10 * span.reduce(function (a, w) { return a + w[key]; }, 0) / span.length) / 10 : null;
+  }
+  var streak = thisWeek ? 1 : 0;
+  for (i = weeks.length - 1; i >= 0 && weeks[i].workouts; i--) streak++;
+  return {avg_workouts_4w: avg(4, 'workouts'), avg_workouts_12w: avg(12, 'workouts'), avg_sets_4w: avg(4, 'sets'),
+    streak_weeks: streak, best_week: weeks.reduce(function (m, w) { return Math.max(m, w.workouts); }, 0), weeks: weeks};
 }
 
 // Full progress object (same shape as /api/gym/progress).

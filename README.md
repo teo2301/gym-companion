@@ -4,8 +4,12 @@ A gym workout logger with a levelling character: log your sets, get double-progr
 for next time, and watch your lifter level up as your strength improves. Strength levels use
 bodyweight-relative standards per muscle group.
 
-**Everything stays on your phone.** No account, no server, no analytics. Back up to a file
-whenever you like (JSON for restore, CSV for spreadsheets).
+**Your workouts stay on your phone.** No analytics, no ads. Back up to a file whenever you like
+(JSON for restore, CSV for spreadsheets). Also: 190 preset exercises, editable routines and workouts,
+weekly averages and streaks, and a character with a choice of skin tone.
+
+**Friends (optional):** add friends with a code or invite link and share workouts with progress photos;
+only you and your friends see them. Runs on a small server (`server/`) for friends & family for now.
 
 ## Get it
 
@@ -25,6 +29,8 @@ Privacy policy: <https://teo2301.github.io/gym-companion/privacy.html>
 | `tools/build.sh` | Builds `docs/` + the Android assets from the shared source, runs a leak check, `--apk` also builds the signed release APK. |
 | `tools/e2e.py` | End-to-end test in WebKit (iPhone) and Chromium (Android) via Playwright, including offline. |
 | `tools/site/` | Extra site pages (privacy policy). |
+| `server/` | Friends API (`social.py`, stdlib + Pillow, SQLite) + `test_social.py`; run with `docker compose up -d gym-social`. |
+| `tools/e2e_social.py` | Two-person friends test (iPhone + Android engines) against a throwaway server. |
 
 ## Release checklist
 

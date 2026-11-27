@@ -13,6 +13,8 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -21,6 +23,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -40,6 +43,17 @@ class MainActivity : ComponentActivity() {
      *  real https origin (stable IndexedDB/localStorage) and file:// access can stay off. */
     private val assetLoader by lazy {
         WebViewAssetLoader.Builder().addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this)).build()
+    }
+
+    /** <input type="file"> in the page (profile / progress photos): WebView needs the app to answer it.
+     *  Images go through the system photo picker (no storage permission); anything else via the file picker.
+     *  The callback must always be answered (null = cancelled) or the page's file input stays stuck. */
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        fileCallback?.onReceiveValue(uri?.let { arrayOf(it) }); fileCallback = null
+    }
+    private val pickAnyLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        fileCallback?.onReceiveValue(uri?.let { arrayOf(it) }); fileCallback = null
     }
 
     private val openDocumentLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -83,6 +97,21 @@ class MainActivity : ComponentActivity() {
             allowContentAccess = false
         }
         webView.addJavascriptInterface(GymBridge(), "GymBridge")
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>,
+                                           params: FileChooserParams): Boolean {
+                fileCallback?.onReceiveValue(null)
+                fileCallback = callback
+                return try {
+                    if (params.acceptTypes.any { it.startsWith("image") })
+                        pickImageLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    else pickAnyLauncher.launch(arrayOf("*/*"))
+                    true
+                } catch (e: Exception) {
+                    fileCallback = null; false
+                }
+            }
+        }
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                 assetLoader.shouldInterceptRequest(request.url)

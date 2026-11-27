@@ -6,12 +6,12 @@
 'use strict';
 
 var DB_NAME = 'gym-companion';
-var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot', 'skinTone'];
+var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot', 'skinTone', 'socialToken', 'socialMe'];
 var LS_KEYS = {
   bodyweight: 'gymBodyweight', lastLv: 'gymLv', lastBackupAt: 'gymLastBackupAt',
   onboarded: 'gymOnboarded', seedBests: 'gymSeedBests', routines: 'gymRoutines',
   notes: 'gymNotes', custom: 'gymCustom', snapshot: 'gymSnapshot', lastBackupNudge: 'gymBackupNudge',
-  skinTone: 'gymSkinTone'
+  skinTone: 'gymSkinTone', socialToken: 'gymSocialToken', socialMe: 'gymSocialMe'
 };
 var UPPER = ['chest', 'front_delts', 'side_delts', 'rear_delts', 'triceps', 'biceps', 'lats', 'upper_back', 'traps', 'forearms', 'abs', 'obliques'];
 var LOWER = ['quads', 'hamstrings', 'glutes', 'calves', 'adductors', 'lower_back'];
@@ -515,7 +515,7 @@ function makePublic(c) {
     strategy = strategy === 'replace' ? 'replace' : 'merge';
     var counts = {sessions: 0, sessionsAdded: 0, seedBests: 0, routines: 0, notes: 0, custom: 0};
     return Promise.all([sessionsAll(), kvGet('seedBests'), kvGet('routines'), kvGet('notes'),
-      kvGet('custom'), kvGet('bodyweight'), kvGet('lastLv')]).then(function (v) {
+      kvGet('custom'), kvGet('bodyweight'), kvGet('lastLv'), kvGet('socialToken')]).then(function (v) {
       var existing = asArray(v[0]), incoming = asArray(data.sessions), next = {}, tasks = [];
       counts.sessions = incoming.length;
       var pick = function (key, fallback) {
@@ -531,6 +531,7 @@ function makePublic(c) {
         next.bodyweight = pick('bodyweight', 75);
         next.lastLv = pick('lastLv', 0);
         next.skinTone = pick('skinTone', null);
+        next.socialToken = pick('socialToken', null); next.socialMe = pick('socialMe', null);   // friends login
         counts.sessionsAdded = next.sessions.length;
         // Clear strictly before writing, so the restored sessions can never be wiped by the clear.
         tasks.push(sessionsClear().then(function () {
@@ -564,7 +565,8 @@ function makePublic(c) {
         });
         next.bodyweight = v[5] == null ? pick('bodyweight', 75) : v[5];
         next.lastLv = v[6] == null ? pick('lastLv', 0) : v[6];
-        var tn = pick('skinTone', null); if (tn) next.skinTone = tn;   // merge: keep yours unless the backup has one
+        var tn = pick('skinTone', null); if (tn) next.skinTone = tn;
+        if (!v[7] && pick('socialToken', null)) { next.socialToken = pick('socialToken', null); next.socialMe = pick('socialMe', null); }   // merge: keep yours unless the backup has one
         added.forEach(function (s) { tasks.push(sessionPut(s)); });
       }
       counts.seedBests = Object.keys(next.seedBests).length;

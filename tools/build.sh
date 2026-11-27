@@ -17,12 +17,14 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC=${GYM_SRC:-$HOME/projects/services/serverchat/static/gym}
 DOCS="$ROOT/docs"
 ASSETS="$ROOT/android/app/src/main/assets/gym"
-APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js exercises.json manifest.json
+APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js social.js exercises.json manifest.json
            icon-180.png icon-192.png icon-512.png)
 
-PUBLIC_CONFIG='// Public build: offline, all data stays on this device.
+SOCIAL_API=${GYM_SOCIAL_API:-$(cat "$HOME/.config/gym-companion/social-api.txt" 2>/dev/null)}
+PUBLIC_CONFIG="// Public build: offline, workouts stay on this device. Friends & feed (opt-in) use the API below.
 window.GYM_PUBLIC = true;
-'
+window.GYM_SOCIAL_API = '$SOCIAL_API';
+"
 
 for f in "${APP_FILES[@]}" sw-public.js; do [ -f "$SRC/$f" ] || { echo "missing $SRC/$f" >&2; exit 1; }; done
 for f in "${APP_FILES[@]}"; do node --check "$SRC/$f" 2>/dev/null || [[ $f != *.js ]] || { echo "syntax error in $f" >&2; exit 1; }; done
@@ -47,7 +49,10 @@ rm -f "$DOCS/sw.js"   # the private no-cache worker must never ship publicly
 # outside the repo so the check itself doesn't publish them.
 LEAKS_FILE=${GYM_LEAK_PATTERNS:-$HOME/.config/gym-companion/leak-patterns.txt}
 [ -f "$LEAKS_FILE" ] || { echo "missing leak patterns file $LEAKS_FILE" >&2; exit 1; }
-if grep -rIEn --exclude=*.log --exclude-dir=shots -f "$LEAKS_FILE" "$DOCS" "$ASSETS" "$ROOT/android/app/src" "$ROOT/README.md" "$ROOT/tools"; then
+# The one deliberately public value (the social API URL) is allow-listed in a file next to the patterns.
+ALLOW_FILE=${GYM_LEAK_ALLOW:-$HOME/.config/gym-companion/leak-allow.txt}
+if grep -rIEn --exclude=*.log --exclude-dir=shots -f "$LEAKS_FILE" "$DOCS" "$ASSETS" "$ROOT/android/app/src" "$ROOT/README.md" "$ROOT/tools" \
+   | { if [ -s "$ALLOW_FILE" ]; then grep -vF -f "$ALLOW_FILE"; else cat; fi; } | grep .; then
   echo "LEAK CHECK FAILED: private strings above" >&2; exit 1
 fi
 

@@ -15,3 +15,6 @@ __pycache__/
 *.env
 # internal review notes
 android/REVIEW.md
+data/
+social.env
+server/__pycache__/

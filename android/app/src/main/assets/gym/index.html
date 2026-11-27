@@ -86,6 +86,16 @@ h1{font-size:30px;letter-spacing:-.02em;margin:8px 0 2px;font-weight:750}
 .wset span.u{color:var(--dim);font-size:13px;flex:none}
 .wadd{width:100%;height:38px;border-radius:12px;color:var(--volt);font-weight:700;font-size:14px}
 .wro{color:var(--dim);font-size:14px;margin:0 4px 6px}
+.wkcard{background:var(--card);border-radius:20px;padding:16px;margin-bottom:10px}
+.wkstats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.wkstats div{background:var(--card2);border-radius:14px;padding:10px 10px 9px;min-width:0}
+.wkstats small{display:block;color:var(--dim);font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wkstats b{display:block;font-size:24px;font-weight:800;margin-top:2px}.wkstats b i{font-style:normal;font-size:13px;color:var(--dim);font-weight:600;margin-left:3px}
+.wkbars{display:flex;align-items:flex-end;gap:4px;height:64px;margin:14px 2px 4px}
+.wkbars span{flex:1;background:var(--line);border-radius:4px 4px 2px 2px;min-height:4px}
+.wkbars span.on{background:var(--volt2)}.wkbars span.now{background:var(--volt)}
+.wkax{display:flex;justify-content:space-between;color:var(--dim2);font-size:11px;margin:0 2px}
+.wknote{color:var(--dim);font-size:13px;margin-top:8px}
 .rrow{display:flex;align-items:stretch;gap:8px;margin-bottom:10px}
 .rrow .rcard{flex:1;margin-bottom:0;min-width:0}
 .rrow .rcard .t{min-width:0}.rrow .rcard b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -320,6 +330,8 @@ textarea.txt{min-height:96px;resize:none}
     <div class="linfo"><div class="lv"><small>LV</small><b class="num" id="lvNum">–</b></div><div class="tier" id="lvTier">&nbsp;</div>
       <div class="xp"><i id="xpBar"></i></div><div class="lnext" id="lvNext"></div></div></div>
   <div id="heroBox"><div class="skel" style="height:190px"></div></div>
+  <div id="weekSec" style="display:none"><div class="labelrow"><div class="label">Your weeks</div></div><div class="wkcard" id="weekCard"></div></div>
+  <div id="socialSec" style="display:none"><div class="labelrow"><div class="label">Friends</div></div><div id="socialBox"></div></div>
   <div class="labelrow"><div class="label">Your body</div>
     <div class="seg" id="bodySeg"><button data-m="week" class="on">This week</button><button data-m="rec">Recovery</button><button data-m="str">Strength</button></div></div>
   <div class="bodycard" id="bodyCard"><div id="bodyMap"></div><div class="legend" id="bodyLegend"></div><div class="minfo" id="bodyInfo"></div>
@@ -371,6 +383,7 @@ textarea.txt{min-height:96px;resize:none}
   <div class="big" id="sStats" style="text-align:left"></div>
   <div id="sPrs" style="text-align:left;margin-top:16px"></div>
   <div class="tools" style="max-width:380px;margin:16px auto 0"><button id="summaryBackup">↓ Back up</button><button id="summaryCsv">↓ CSV</button></div>
+  <button class="finish" id="doneShare" style="display:none">📸 Share with friends</button>
   <button class="finish" id="doneEdit">✎ Edit this workout</button>
   <button class="finish" id="homeBtn" style="background:var(--volt);color:#0c0e12">Done</button>
 </div></section>
@@ -398,6 +411,7 @@ textarea.txt{min-height:96px;resize:none}
 <script src="gymstore.js"></script>
 <script src="backup.js"></script>
 <script src="pwa.js"></script>
+<script src="social.js"></script>
 
 <script>
 'use strict';
@@ -619,6 +633,27 @@ function renderHome() {
   });
   renderBody();
   renderWorkouts();
+  renderWeeks(plan.week);
+}
+/* "Your weeks": this week, 4-week average, streak, last 12 weeks (complete Mon-Sun weeks + this one) */
+function renderWeeks(w) {
+  var sec = $('weekSec');
+  if (!w || !w.weeks) { sec.style.display = 'none'; return; }
+  var all = w.weeks.concat([{week: 'now', workouts: w.workouts}]);
+  if (!all.some(function (x) { return x.workouts; })) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  var max = Math.max(1, Math.max.apply(null, all.map(function (x) { return x.workouts; })));
+  var avg = w.avg_workouts_4w;
+  $('weekCard').innerHTML = '<div class="wkstats">' +
+    '<div><small>This week</small><b class="num">' + w.workouts + '<i>' + (w.workouts === 1 ? 'workout' : 'workouts') + '</i></b></div>' +
+    '<div><small>Avg / week</small><b class="num">' + (avg === null ? '\u2013' : avg) + '<i>last 4</i></b></div>' +
+    '<div><small>Streak</small><b class="num">' + w.streak_weeks + '<i>' + (w.streak_weeks === 1 ? 'week' : 'weeks') + '</i></b></div></div>' +
+    '<div class="wkbars" aria-label="Workouts per week, last 13 weeks">' + all.map(function (x, i) {
+      var h = Math.round(100 * x.workouts / max);
+      return '<span class="' + (i === all.length - 1 ? 'now' : (x.workouts ? 'on' : '')) + '" style="height:' + Math.max(6, h) + '%" title="' + x.workouts + '"></span>';
+    }).join('') + '</div><div class="wkax"><span>12 weeks ago</span><span>this week</span></div>' +
+    '<div class="wknote">' + (w.avg_workouts_12w !== null ? '12-week average ' + w.avg_workouts_12w + ' a week \u00b7 ' : '') +
+    'best week ' + w.best_week + (w.avg_sets_4w !== null ? ' \u00b7 ~' + Math.round(w.avg_sets_4w) + ' sets a week lately' : '') + '</div>';
 }
 function openSheet(html) { $('sheetBody').innerHTML = html; $('sheetBg').classList.add('on'); $('sheet').classList.add('on'); }
 function closeSheet() { $('sheetBg').classList.remove('on'); $('sheet').classList.remove('on'); }
@@ -1339,6 +1374,11 @@ function settingsSheet() {
 GymStore.create({}).then(function (s) {
   Store = s; IS_PUBLIC = Store.mode === 'public'; window.Store = Store; window.IS_PUBLIC = IS_PUBLIC;
   if (window.Backup) Backup.init(Store);
+  if (window.Social) {
+    Social.init();
+    $('doneShare').style.display = Social.enabled() ? '' : 'none';
+    $('doneShare').onclick = function () { buzz(); Social.share((live && live.summary) || {}); };
+  }
   $('settingsBtn').onclick = settingsSheet;
   loadPlan();
   return Store.live(version).then(function (st) {
