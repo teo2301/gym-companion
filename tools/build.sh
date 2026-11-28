@@ -17,7 +17,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC=${GYM_SRC:-$HOME/projects/services/serverchat/static/gym}
 DOCS="$ROOT/docs"
 ASSETS="$ROOT/android/app/src/main/assets/gym"
-APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js photo.js social.js charts.js progress.js calendar.js profile.js cardio.js exercises.json manifest.json
+APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js photo.js social.js charts.js progress.js calendar.js profile.js cardio.js watchlink.js exercises.json manifest.json
            icon-180.png icon-192.png icon-512.png)
 
 SOCIAL_API=${GYM_SOCIAL_API:-$(cat "$HOME/.config/gym-companion/social-api.txt" 2>/dev/null)}
@@ -54,7 +54,7 @@ LEAKS_FILE=${GYM_LEAK_PATTERNS:-$HOME/.config/gym-companion/leak-patterns.txt}
 [ -f "$LEAKS_FILE" ] || { echo "missing leak patterns file $LEAKS_FILE" >&2; exit 1; }
 # The one deliberately public value (the social API URL) is allow-listed in a file next to the patterns.
 ALLOW_FILE=${GYM_LEAK_ALLOW:-$HOME/.config/gym-companion/leak-allow.txt}
-if grep -rIEn --exclude=*.log --exclude-dir=shots -f "$LEAKS_FILE" "$DOCS" "$ASSETS" "$ROOT/android/app/src" "$ROOT/README.md" "$ROOT/tools" \
+if grep -rIEn --exclude=*.log --exclude-dir=shots -f "$LEAKS_FILE" "$DOCS" "$ASSETS" "$ROOT/android/app/src" "$ROOT/android/wear/src" "$ROOT/README.md" "$ROOT/tools" \
    | { if [ -s "$ALLOW_FILE" ]; then grep -vF -f "$ALLOW_FILE"; else cat; fi; } | grep .; then
   echo "LEAK CHECK FAILED: private strings above" >&2; exit 1
 fi
@@ -74,5 +74,10 @@ if [ "${1:-}" = "--apk" ]; then
   # Stable name too: https://github.com/teo2301/gym-companion/releases/latest/download/gym-companion.apk
   # always serves the newest release, as long as every release also uploads this file.
   cp "$ROOT/release/gym-companion-$VERSION.apk" "$ROOT/release/gym-companion.apk"
-  echo "apk: release/gym-companion-$VERSION.apk (+ release/gym-companion.apk)"
+  # Wear OS watch app: same applicationId + same key (the Data Layer only routes between matching apps)
+  cp wear/build/outputs/apk/release/wear-release.apk "$ROOT/release/gym-companion-watch-$VERSION.apk"
+  "$APKSIGNER" verify --print-certs "$ROOT/release/gym-companion-watch-$VERSION.apk" 2>/dev/null \
+    | grep -m1 'SHA-256' || { echo "WATCH APK NOT SIGNED" >&2; exit 1; }
+  cp "$ROOT/release/gym-companion-watch-$VERSION.apk" "$ROOT/release/gym-companion-watch.apk"
+  echo "apk: release/gym-companion-$VERSION.apk + release/gym-companion-watch-$VERSION.apk (+ stable names)"
 fi

@@ -6,13 +6,14 @@
 'use strict';
 
 var DB_NAME = 'gym-companion';
-var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot', 'skinTone', 'socialToken', 'socialMe', 'bwLog', 'userName', 'namePrompted', 'deletedWorkouts'];
+var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot', 'skinTone', 'socialToken', 'socialMe', 'bwLog', 'userName', 'namePrompted', 'deletedWorkouts', 'sex', 'goal', 'height', 'favLift', 'shareBody'];
 var LS_KEYS = {
   bodyweight: 'gymBodyweight', lastLv: 'gymLv', lastBackupAt: 'gymLastBackupAt',
   onboarded: 'gymOnboarded', seedBests: 'gymSeedBests', routines: 'gymRoutines',
   notes: 'gymNotes', custom: 'gymCustom', snapshot: 'gymSnapshot', lastBackupNudge: 'gymBackupNudge',
   skinTone: 'gymSkinTone', socialToken: 'gymSocialToken', socialMe: 'gymSocialMe', bwLog: 'gymBwLog',
-  userName: 'gymUserName', namePrompted: 'gymNamePrompted', deletedWorkouts: 'gymDeletedWorkouts'
+  userName: 'gymUserName', namePrompted: 'gymNamePrompted', deletedWorkouts: 'gymDeletedWorkouts',
+  sex: 'gymSex', goal: 'gymGoal', cycle: 'gymCycle', height: 'gymHeight', favLift: 'gymFavLift', shareBody: 'gymShareBody'
 };
 var UPPER = ['chest', 'front_delts', 'side_delts', 'rear_delts', 'triceps', 'biceps', 'lats', 'upper_back', 'traps', 'forearms', 'abs', 'obliques'];
 var LOWER = ['quads', 'hamstrings', 'glutes', 'calves', 'adductors', 'lower_back'];
@@ -235,7 +236,15 @@ function bestsFromMaxes(maxes) {
   }
   return out;
 }
-function starterRoutines(maxes, existing) {
+// Goal presets: movement patterns that are added to (never replace) a person's own routines.
+var GOAL_ROUTINES = {
+  muscle: ['Glutes & core', ['Hip Thrust (Barbell)', 'Bulgarian Split Squat (Dumbbell)', 'Cable Crunch', 'Pallof Press']],
+  core: ['Core & mobility', ['Dead Bug', 'Side Plank', 'Pallof Press', 'Back Extension', 'Face Pull', 'Hip Abduction (Machine)']]
+};
+function goalTemplate(goal) {
+  return has(GOAL_ROUTINES, goal) ? {name: GOAL_ROUTINES[goal][0], exercises: GOAL_ROUTINES[goal][1].slice()} : null;
+}
+function starterRoutines(maxes, existing, goal) {
   var cfg = cfgObject(existing);
   if (Object.keys(cfg.templates).length) return cfg;
   var names = Object.keys(maxes || {}), upper = [], lower = [], i, mm;
@@ -247,6 +256,8 @@ function starterRoutines(maxes, existing) {
   cfg.templates['Full Body'] = names.slice(0, 8);
   cfg.templates['Upper'] = upper.length ? upper : names.slice(0, 4);
   cfg.templates['Lower'] = lower.length ? lower : names.slice(0, 4);
+  // Goal presets add movement patterns, never replace what the person already entered.
+  var gt = goalTemplate(goal); if (gt) cfg.templates[gt.name] = gt.exercises;
   Object.keys(cfg.templates).forEach(function (k) { if (!cfg.templates[k].length) delete cfg.templates[k]; });
   return cfg;
 }
@@ -271,13 +282,15 @@ function loadPresets() {
 }
 function refreshCache(c) {
   return Promise.all([kvGet('bodyweight'), kvGet('seedBests'), kvGet('routines'),
-    kvGet('notes'), kvGet('custom'), kvGet('lastLv'), sessionsAll()]).then(function (v) {
-    c.bodyweight = v[0] == null ? 75 : num(v[0], 75);
+    kvGet('notes'), kvGet('custom'), kvGet('lastLv'), sessionsAll(), kvGet('sex'), kvGet('goal')]).then(function (v) {
+    c.bodyweight = v[0] == null ? (v[7] === 'female' ? 65 : 75) : num(v[0], 75);
     c.seedBests = v[1] || {};
     c.routines = cfgObject(v[2]);
     c.notes = v[3] || {};
     c.custom = asArray(v[4]);
     c.lastLv = v[5] == null ? 0 : num(v[5]);
+    c.sex = v[7] || null;
+    c.goal = v[8] || null;
     c.sessions = asArray(v[6]).sort(function (a, b) {
       return num(a.started != null ? a.started : a.start) - num(b.started != null ? b.started : b.start);
     });
@@ -286,7 +299,7 @@ function refreshCache(c) {
 }
 function planArgs(c) {
   return {sessions: c.sessions, routines: c.routines, notes: c.notes, custom: c.custom,
-    bodyweight: c.bodyweight, seedBests: c.seedBests};
+    bodyweight: c.bodyweight, seedBests: c.seedBests, sex: c.sex, goal: c.goal};
 }
 function ctxFor(c) {
   return {
@@ -319,7 +332,7 @@ function makePublic(c) {
   store.progress = function () {
     return refreshCache(c).then(function () {
       return core().progress({sessions: c.sessions, seedBests: c.seedBests, bodyweight: c.bodyweight,
-        custom: c.custom});
+        custom: c.custom, sex: c.sex});
     });
   };
   store.live = function () { return kvGet('live').then(stateOut); };
@@ -559,19 +572,40 @@ function makePublic(c) {
 
   store.onboard = function (o) {
     o = o || {};
-    var bw = num(o.bodyweight, 75) || 75, seed = bestsFromMaxes(o.maxes);
+    var sex = o.sex === 'female' || o.sex === 'male' ? o.sex : null;
+    var goal = ['strength', 'muscle', 'core', 'general'].indexOf(o.goal) >= 0 ? o.goal : null;
+    var bw = num(o.bodyweight, 0);                       // optional: blank keeps the sex-based default
+    var ht = num(o.height, 0); ht = ht >= 100 && ht <= 250 ? Math.round(ht) : null;   // optional, cm
+    var fav = typeof o.favLift === 'string' && o.favLift && o.favLift.length <= 80 ? o.favLift : null;   // optional
+    var seed = bestsFromMaxes(o.maxes);
     return refreshCache(c).then(function () {
-      var cfg = starterRoutines(o.maxes, c.routines);
-      return Promise.all([kvSet('bodyweight', bw), kvSet('seedBests', seed),
-        kvSet('onboarded', true), kvSet('routines', cfg)])
+      var cfg = starterRoutines(o.maxes, c.routines, goal);
+      var writes = [kvSet('seedBests', seed), kvSet('onboarded', true), kvSet('routines', cfg), kvSet('sex', sex), kvSet('goal', goal)];
+      if (bw > 0) writes.push(kvSet('bodyweight', bw));
+      if (ht) writes.push(kvSet('height', ht));
+      if (fav) writes.push(kvSet('favLift', fav));
+      return Promise.all(writes)
         .then(function () { return refreshCache(c).then(function () { return {ok: true, seedBests: seed, routines: cfg}; }); });
     });
   };
 
-  store.backupData = function () {
+  // Picking a goal later in Settings adds its routine if it is not there yet (never removes or edits anything).
+  store.addGoalRoutine = function (goal) {
+    var gt = goalTemplate(goal); if (!gt) return Promise.resolve({ok: true, added: false});
+    return refreshCache(c).then(function () {
+      var cfg = cfgObject(c.routines);
+      if (cfg.templates[gt.name]) return {ok: true, added: false, name: gt.name};
+      cfg.templates[gt.name] = gt.exercises;
+      return kvSet('routines', cfg).then(function () { return refreshCache(c).then(function () { return {ok: true, added: true, name: gt.name}; }); });
+    });
+  };
+
+  store.backupData = function (opts) {
     return Promise.all([kvGet('seedBests'), sessionsAll(), kvGet('routines'), kvGet('notes'),
-      kvGet('custom'), kvGet('bodyweight'), kvGet('lastLv'), publicSettings()]).then(function (v) {
+      kvGet('custom'), kvGet('bodyweight'), kvGet('lastLv'), publicSettings(), kvGet('cycle')]).then(function (v) {
       var settings = v[7] || {}; settings.snapshot = null;  // don't nest snapshots inside snapshots
+      // Cycle data is sensitive: only an explicit opt-in puts it in an exported file.
+      if (opts && opts.includeCycle) settings.cycle = v[8]; else delete settings.cycle;
       return {schemaVersion: 1, appVersion: global.GYM_APP_VERSION || 'gym-companion-1',
         exportedAt: new Date().toISOString(), seedBests: v[0] || {}, sessions: asArray(v[1]),
         routines: v[2] || {templates: {}, hidden: []}, notes: v[3] || {},
@@ -604,6 +638,8 @@ function makePublic(c) {
         next.bwLog = asArray(pick('bwLog', []));
         next.userName = pick('userName', null);
         next.deletedWorkouts = asArray(pick('deletedWorkouts', []));
+        ['sex', 'goal', 'height', 'favLift', 'shareBody'].forEach(function (k) { var pv = pick(k, null); if (pv != null) next[k] = pv; });   // an older backup never blanks these
+        if (pick('cycle', null)) next.cycle = pick('cycle', null);
         counts.sessionsAdded = next.sessions.length;
         // Clear strictly before writing, so the restored sessions can never be wiped by the clear.
         tasks.push(sessionsClear().then(function () {
@@ -642,6 +678,11 @@ function makePublic(c) {
         next.bwLog = Object.keys(bwm).sort().map(function (d) { return bwm[d]; });   // merge weigh-ins by day
         var un = pick('userName', null);                 // merge: keep your name unless this phone has none
         if (un) tasks.push(kvGet('userName').then(function (cur) { if (!cur) return kvSet('userName', un); }));
+        var cyc = pick('cycle', null);
+        ['sex', 'goal', 'height', 'favLift', 'shareBody'].forEach(function (k) {
+          var pv = pick(k, null); if (pv != null) tasks.push(kvGet(k).then(function (cur) { if (cur == null) return kvSet(k, pv); }));
+        });
+        if (cyc) tasks.push(kvGet('cycle').then(function (cur) { if (!cur) return kvSet('cycle', cyc); }));
         if (!v[7] && pick('socialToken', null)) { next.socialToken = pick('socialToken', null); next.socialMe = pick('socialMe', null); }   // merge: keep yours unless the backup has one
         added.forEach(function (s) { tasks.push(sessionPut(s)); });
       }
@@ -650,6 +691,7 @@ function makePublic(c) {
       counts.notes = Object.keys(next.notes || {}).length;
       counts.custom = next.custom.length;
       KEYS.forEach(function (key) { if (has(next, key)) tasks.push(kvSet(key, next[key])); });
+      if (next.cycle) tasks.push(kvSet('cycle', next.cycle));   // opt-in only; never in KEYS/backups by default
       tasks.push(kvSet('onboarded', true));
       return Promise.all(tasks);
     }).then(function () {

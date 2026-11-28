@@ -55,6 +55,31 @@ var APPROX = {
   'Shrug (Barbell)': [0.75, 1.05, 1.45, 1.95, 2.45]
 };
 
+/* ExRx women 18-39 absolute kg benchmarks (Beginner/Novice/Intermediate/Advanced/Elite).
+ * Checked row by row (all 24 values, 4 lifts x 6 bodyweights) against exrx.net/Testing/WeightLifting/{Bench,Squat,Deadlift,Press}StandardsKg,
+ * "Adult Women", Ages 18-39, on 2026-11-28: exact match. The 100 kg row is ExRx's "90+" row. Odd-looking rows (e.g. deadlift at 44 kg)
+ * are ExRx's own values. Rows are interpolated by bodyweight.
+ * These are rough population benchmarks, not predictions or medical advice. */
+var FEMALE_ABS = [
+  {bw:44, bench:[22.5,30,35,42.5,52.5], squat:[20,37.5,45,60,75], deadlift:[25,47.5,50,80,105], press:[15,17.5,22.5,30,40]},
+  {bw:52, bench:[27.5,35,37.5,50,62.5], squat:[25,45,52.5,67.5,87.5], deadlift:[30,55,62.5,90,115], press:[17.5,22.5,27.5,35,45]},
+  {bw:60, bench:[32.5,40,42.5,57.5,67.5], squat:[27.5,50,60,77.5,95], deadlift:[35,62.5,72.5,100,125], press:[17.5,25,30,40,50]},
+  {bw:75, bench:[37.5,42.5,52.5,65,85], squat:[32.5,57.5,67.5,90,115], deadlift:[40,72.5,85,117.5,145], press:[22.5,30,35,47.5,62.5]},
+  {bw:90, bench:[40,52.5,60,75,95], squat:[37.5,67.5,80,105,132.5], deadlift:[45,87.5,97.5,130,160], press:[25,35,40,52.5,67.5]},
+  {bw:100, bench:[42.5,55,62.5,80,100], squat:[40,72.5,85,110,137.5], deadlift:[50,90,105,137.5,165], press:[27.5,37.5,42.5,57.5,72.5]}
+];
+var FEMALE_KEYS = {
+  'Bench Press (Barbell)': 'bench', 'Squat (Barbell)': 'squat', 'Deadlift (Barbell)': 'deadlift',
+  'Overhead Press (Barbell)': 'press'
+};
+// Variants keep their own men's row and take the women/men gap of the main lift they derive from.
+var FEMALE_RELATED = {'Romanian Deadlift (Barbell)': 'deadlift', 'Bench Press - Close Grip (Barbell)': 'bench'};
+// The women's table only spans these bodyweights; outside it the RATIO to bodyweight is held steady
+// (holding the absolute kg steady made light lifters' bars too high and heavy lifters' too low).
+var FEMALE_BW_MIN = 44, FEMALE_BW_MAX = 100;
+var MALE_KEYS = {bench: 'Bench Press (Barbell)', squat: 'Squat (Barbell)',
+  deadlift: 'Deadlift (Barbell)', press: 'Overhead Press (Barbell)'};
+
 var MUSCLE_LIFTS = {
   chest: ['Bench Press (Barbell)', 'Bench Press (Dumbbell)', 'Incline Bench Press (Dumbbell)'],
   front_delts: ['Overhead Press (Barbell)', 'Shoulder Press (Dumbbell)'],
@@ -366,11 +391,51 @@ function classify(name) {
 
 /* ---------- strength rating / progress ---------- */
 
-function rateLift(name, e1rmKg, bw) {
+function femaleKg(key, bw, i) {
+  var rows = FEMALE_ABS, a = rows[0], b = rows[rows.length - 1], k;
+  for (k = 0; k < rows.length; k++) if (bw <= rows[k].bw) {
+    b = rows[k]; a = rows[k === 0 ? 0 : k - 1]; break;
+  }
+  if (bw >= b.bw) a = b;
+  if (a === b) return a[key][i];
+  var f = (bw - a.bw) / (b.bw - a.bw);
+  return a[key][i] + (b[key][i] - a[key][i]) * f;
+}
+function median(v) {
+  var s = v.slice().sort(function (a, b) { return a - b; });
+  return s[Math.floor(s.length / 2)];
+}
+/* Scale the approximate tables by the median of the four official women's/men's gaps at
+ * this bodyweight and rung. Keeps machines/dumbbells on the same scale without inventing
+ * per-exercise female norms. */
+function femaleFactor(bw, i) {
+  var bc = clamp(bw, FEMALE_BW_MIN, FEMALE_BW_MAX);
+  var vals = ['bench', 'squat', 'deadlift', 'press'].map(function (k) {
+    var male = STRENGTH_STANDARDS[MALE_KEYS[k]][i] * bc;
+    return male > 0 ? femaleKg(k, bc, i) / male : 1;
+  });
+  return clamp(median(vals), .35, 1.25);
+}
+function standardsFor(name, bw, sex) {
+  var loaded = has(BODYWEIGHT_LOADED, name);
+  var base = (loaded ? BODYWEIGHT_LOADED[name] : null) || STRENGTH_STANDARDS[name] || APPROX[name];
+  if (!base || sex !== 'female' || !(bw > 0)) return base;
+  var fk = FEMALE_KEYS[name], rk = FEMALE_RELATED[name], bc = clamp(bw, FEMALE_BW_MIN, FEMALE_BW_MAX);
+  return base.map(function (r, i) {
+    if (fk) return r2(femaleKg(fk, bc, i) / bc);
+    if (rk) return r2(r * femaleKg(rk, bc, i) / (STRENGTH_STANDARDS[MALE_KEYS[rk]][i] * bc));
+    // Bodyweight-loaded lifts rate total (bodyweight + added) over bodyweight, so the ratio can never
+    // drop below 1.0: scale only the added-load part. Scaling the whole ratio would rate a bare
+    // bodyweight rep as Intermediate and hide the lower levels.
+    if (loaded) return r2(1 + (r - 1) * femaleFactor(bw, i));
+    return r2(r * femaleFactor(bw, i));
+  });
+}
+function rateLift(name, e1rmKg, bw, sex) {
   var e = num(e1rmKg), w = num(bw), out;
   if (w <= 0 || e <= 0) return null;
   var loaded = has(BODYWEIGHT_LOADED, name);
-  var th = (loaded ? BODYWEIGHT_LOADED[name] : null) || STRENGTH_STANDARDS[name] || APPROX[name];
+  var th = standardsFor(name, w, sex);
   if (!th) return null;
   var total = loaded ? e + w : e, ratio = total / w, idx = -1, i;
   for (i = 0; i < th.length; i++) if (ratio >= th[i]) idx = i;
@@ -417,7 +482,7 @@ function bestsUntil(sessions, until, seedBests) {
   }
   return best;
 }
-function muscleLevels(bests, bw, custom) {
+function muscleLevels(bests, bw, custom, sex) {
   var out = {}, m, lifts, cands, i, r, official, b, name, info, be, cm, extra = {};
   cm = customMap(custom);
   // A custom lift with a reference max can rate its main muscle using that muscle's yardstick.
@@ -429,7 +494,7 @@ function muscleLevels(bests, bw, custom) {
     for (i = 0; i < info.primary.length; i++) {
       m = info.primary[i]; lifts = MUSCLE_LIFTS[m];
       if (!lifts || !lifts.length || !has(MUSCLE_LIFTS, m)) continue;
-      r = rateLift(lifts[0], be.e, bw);
+      r = rateLift(lifts[0], be.e, bw, sex);
       if (!r) continue;
       r.exercise = name; r.approx = true; r.score = r2(score(r));
       r.w = be.w; r.r = be.r; r.date = be.date;
@@ -442,7 +507,7 @@ function muscleLevels(bests, bw, custom) {
     for (i = 0; i < lifts.length; i++) {
       if (!has(bests, lifts[i])) continue;
       be = bestEntry(bests[lifts[i]]);
-      r = rateLift(lifts[i], be.e, bw);
+      r = rateLift(lifts[i], be.e, bw, sex);
       if (!r) continue;
       r.score = r2(score(r)); r.w = be.w; r.r = be.r; r.date = be.date;
       cands.push(r);
@@ -660,10 +725,11 @@ function weekRhythm(counted, monday, thisWeek) {
 function progress(opts) {
   opts = opts || {};
   var sessions = normalizeSessions(opts.sessions);
-  var bw = num(opts.bodyweight) > 0 ? num(opts.bodyweight) : 75;
+  var sex = opts.sex === 'female' || opts.sex === 'male' ? opts.sex : null;
+  var bw = num(opts.bodyweight) > 0 ? num(opts.bodyweight) : (sex === 'female' ? 65 : 75);
   var seed = opts.seedBests || {}, custom = opts.custom;
   var now = Date.now();
-  var levels = muscleLevels(bestsUntil(sessions, null, seed), bw, custom);
+  var levels = muscleLevels(bestsUntil(sessions, null, seed), bw, custom, sex);
   var ov = overall(levels), weeks = [], sets, m, i, j;
   if (sessions.length) {
     var wk = weekStart(sessions[0].start), end, guard = 0;
@@ -683,13 +749,13 @@ function progress(opts) {
         }
       }
       for (m in sets) if (has(sets, m)) sets[m] = r1(sets[m]);
-      var sc = overall(muscleLevels(bestsUntil(sessions, end, seed), bw, custom));
+      var sc = overall(muscleLevels(bestsUntil(sessions, end, seed), bw, custom, sex));
       for (g in groups) if (has(groups, g)) groups[g] = r1(groups[g]);
       weeks.push({week: dateStr(new Date(wk)), sets: sets, groups: groups, score: sc.score, lv: sc.lv});
       wk = end;
     }
   }
-  var then = muscleLevels(bestsUntil(sessions, now - 30 * 86400000, seed), bw, custom);
+  var then = muscleLevels(bestsUntil(sessions, now - 30 * 86400000, seed), bw, custom, sex);
   var gains = keys(levels).map(function (x) {
     return {muscle: x, gain: levels[x].score - (then[x] ? then[x].score : levels[x].score)};
   }).sort(function (a, b) { return b.gain - a.gain; });
@@ -707,7 +773,8 @@ function progress(opts) {
   });
   return {bodyweight: bw, muscles: levels, overall: ov, weeks: weeks, most_improved: most,
     balance: {push: rnd(sumSet(PUSH)), pull: rnd(sumSet(PULL)), upper: rnd(sumSet(UPPER)), lower: rnd(sumSet(LOWER))},
-    weakest: weakest, strongest: strongest, levels: LEVELS};
+    weakest: weakest, strongest: strongest, levels: LEVELS,
+    benchmarks: {sex: sex || 'unisex', source: sex === 'female' ? 'ExRx women 18-39 (estimate)' : 'men\'s 18-39 bodyweight table (estimate)'}};
 }
 
 /* ---------- history + plan ---------- */
@@ -1111,6 +1178,7 @@ function csv(sessions) {
 global.GymCore = {
   MUSCLES: MUSCLES, LEVELS: LEVELS, MUSCLE_LIFTS: MUSCLE_LIFTS, APPROX: APPROX,
   STRENGTH_STANDARDS: STRENGTH_STANDARDS, BODYWEIGHT_LOADED: BODYWEIGHT_LOADED, FIELDS: FIELDS,
+  FEMALE_ABS: FEMALE_ABS, standardsFor: standardsFor,
   e1rm: e1rm, step: step, goalReps: goalReps, target: target, warmup: warmup,
   musclesFor: musclesFor, alternatives: alternatives, classify: classify, setPresets: setPresets,
   presets: function () { return PRESET_NAMES.slice(); },

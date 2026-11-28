@@ -58,5 +58,5 @@ never printed or logged.
 
 1. `tools/build.sh --apk` (bump `versionCode`/`versionName` in `android/app/build.gradle.kts` first).
 2. `<venv with playwright>/bin/python tools/e2e.py` → `E2E OK`.
-3. Commit + push (Pages redeploys `docs/`), then create the GitHub release with ONE file, `"release/gym-companion.apk#Gym Companion (v<version>, released <date>)"` (fixed name for the permanent link, label shows version + date), and delete the previous release (only after the new one is up, so the permanent link never breaks).
+3. Commit + push (Pages redeploys `docs/`), then create the GitHub release with TWO files, `"release/gym-companion.apk#Gym Companion (v<version>, released <date>)"` and `"release/gym-companion-watch.apk#Gym Companion watch app (v<version>)"` (fixed names for the permanent links, label shows version + date), and delete the previous release (only after the new one is up, so the permanent link never breaks).
 4. Every release updates `CHANGELOG.md` first, then the "What's new" (and, if features changed, "Everything it can do" + version history) on `tools/site/download.html`, and uses the same text for the GitHub release notes (`gh release create --notes-file`).

@@ -25,10 +25,15 @@ html[data-theme="midnight"]{--bg:#080d16;--bg2:#0d1420;--card:#131c2a;--card2:#1
   --volt:#63d7ff;--volt2:#3ea8ff;--accent-text:#ff9d5c;--volt-rgb:99,215,255;--volt-dark:#123a4a;--volt-dim:#15536a;--voltglow:rgba(99,215,255,.35)}
 html[data-theme="ember"]{--bg:#100c0a;--bg2:#18110e;--card:#211813;--card2:#2c2018;--line:#3a2a20;
   --volt:#ff9d5c;--volt2:#e4752f;--accent-text:#3ee08f;--volt-rgb:255,157,92;--volt-dark:#4a2718;--volt-dim:#8a4a24;--voltglow:rgba(255,157,92,.35)}
+html[data-theme="bloom"]{--bg:#120c16;--bg2:#1a1020;--card:#24182b;--card2:#30203a;--line:#3d2a48;
+  --volt:#e879f9;--volt2:#b84fd0;--accent-text:#38e8c6;--volt-rgb:232,121,249;--volt-dark:#4a1f56;--volt-dim:#7c368f;--voltglow:rgba(232,121,249,.35)}
 html[data-theme="midnight"] .hero{background:linear-gradient(135deg,#101c2a 0%,#0e1520 45%,#13161c 100%);box-shadow:0 0 0 1px #1d3348 inset,0 20px 50px -20px var(--voltglow)}
 html[data-theme="ember"] .hero{background:linear-gradient(135deg,#2a1a10 0%,#1c1410 45%,#13161c 100%);box-shadow:0 0 0 1px #40291c inset,0 20px 50px -20px var(--voltglow)}
+html[data-theme="bloom"] .hero{background:linear-gradient(135deg,#2a1730 0%,#1c1220 45%,#13161c 100%);box-shadow:0 0 0 1px #41284c inset,0 20px 50px -20px var(--voltglow)}
 html[data-theme="midnight"] .hero p{color:#9fb4c9}
 html[data-theme="ember"] .hero p{color:#c9ac98}
+html[data-theme="bloom"] .hero p{color:#c9aed0}
+.helpTopic ul{margin:0;padding-left:18px}.helpTopic li{margin:0 0 6px}
 .colorRow{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 10px}
 .colorRow label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--dim);font-weight:650}
 .colorRow input[type=color]{width:42px;height:36px;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--card2);cursor:pointer}
@@ -463,6 +468,7 @@ textarea.txt{min-height:96px;resize:none}
 <script src="calendar.js"></script>
 <script src="profile.js"></script>
 <script src="cardio.js"></script>
+<script src="watchlink.js"></script>
 
 <script>
 'use strict';
@@ -546,11 +552,179 @@ function applyTone() {
     if (Lifter.setTone(t) !== before && prog) renderLifter();
   }).catch(function () {});
 }
+/* ---------- profile: physiology and goals. Benchmarks are estimates, not prescriptions. */
+var SEXES = [{id: 'female', name: 'Female'}, {id: 'male', name: 'Male'}, {id: 'none', name: 'Prefer not to say'}];
+var GOALS = [{id: 'strength', name: 'Strength'}, {id: 'muscle', name: 'Muscle & tone'},
+  {id: 'core', name: 'Core & mobility'}, {id: 'general', name: 'General fitness'}];
+function choiceRow(kind, label, items, current) {
+  return '<div class="label" style="margin:2px 0 0">' + label + '</div><div class="char-row" id="' + kind + 'Row">' +
+    items.map(function (it) {
+      return '<button data-' + kind + '="' + it.id + '"' + (it.id === current ? ' class="on"' : '') + '>' + it.name + '</button>';
+    }).join('') + '</div>';
+}
+function markChoice(kind, id) {
+  var row = $(kind + 'Row'); if (!row) return;
+  Array.prototype.forEach.call(row.querySelectorAll('button'), function (b) {
+    b.classList.toggle('on', b.getAttribute('data-' + kind) === id);
+  });
+}
+function wireChoiceRow(kind, box, onChange) {
+  var row = $(kind + 'Row'); if (!row) return;
+  row.onclick = function (e) {
+    var id = e.target && e.target.getAttribute('data-' + kind); if (!id) return;
+    buzz(); box.value = id; markChoice(kind, id);
+    if (kind === 'sex' && $('onBw')) $('onBw').placeholder = 'Bodyweight kg (optional, e.g. ' + (id === 'female' ? '65' : '75') + ')';
+    if (onChange) onChange(id);
+  };
+}
+/* Optional cycle notes: rough, date-based hints only — never a medical prediction. */
+function cyclePhase(c) {
+  if (!c || !c.on || !c.start) return null;
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(c.start)), len = Math.min(45, Math.max(18, parseFloat(c.len) || 28));
+  if (!m) return null;
+  var n = new Date(), since = Math.floor((Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) - Date.UTC(+m[1], +m[2] - 1, +m[3])) / 86400000);
+  if (isNaN(since)) return null;
+  if (since < 0) return {day: null, hint: 'That start date is in the future', flag: 'normal'};   // no negative days
+  var day = since % len + 1;
+  var hint = day <= 2 ? 'Low-energy days — ease off if you want' :
+    day >= len - 2 ? 'Pre-period days — some people feel less tolerant' : 'Mid-cycle — train as you feel';
+  return {day: day, hint: hint, flag: day <= 2 ? 'low' : 'normal'};
+}
+function cycleRow() {
+  return '<details id="cycleBox" hidden style="margin:12px 0 6px"><summary style="cursor:pointer;font-weight:750;font-size:15px;padding:6px 0">Cycle (optional)</summary>' +
+    '<p class="sub" style="margin:4px 0 8px;font-size:12.5px">Only if you want it. Stays on this phone, never shared. ' +
+    'Add it to a backup only with the checkbox below. A rough hint from dates, not medical advice.</p>' +
+    '<div class="char-row" id="cycleRow"><button data-cycle="toggle">Track cycle</button></div>' +
+    '<div class="erow"><b>Last period start</b><input class="txt" id="cycleStart" type="date"></div>' +
+    '<div class="erow"><b>Average cycle (days)</b><input class="txt num" id="cycleLen" type="number" min="18" max="45" value="28"></div>' +
+    '<p class="sub" id="cycleHint" style="margin:0 0 8px;font-size:12.5px"></p>' +
+    '<label class="sub" style="display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:12.5px">' +
+    '<input type="checkbox" id="cycleInclude"> Include cycle data in my next backup</label></details>';
+}
+/* The cycle section exists only for people who chose Female. Switching away just hides it; nothing is deleted. */
+function showCycleFor(sex) { var b = $('cycleBox'); if (b) b.hidden = sex !== 'female'; }
+function wireCycleRow() {
+  if (!$('cycleStart')) return;
+  function show(c) {
+    var ph = cyclePhase(c), el = $('cycleHint');
+    if (el) el.textContent = ph ? (ph.day ? 'Day ' + ph.day + ' · ' : '') + ph.hint : 'No cycle hint set';
+    var b = $('cycleRow') && $('cycleRow').querySelector('[data-cycle]');
+    if (b) b.classList.toggle('on', !!(c && c.on));
+  }
+  Store.get('cycle').then(function (c) {
+    c = c || {};
+    $('cycleStart').value = c.start || '';
+    $('cycleLen').value = c.len || 28;
+    show(c);
+    function save() {
+      var c = {on: !!$('cycleRow').querySelector('[data-cycle]').classList.contains('on'),
+        start: $('cycleStart').value, len: Math.min(45, Math.max(18, parseFloat($('cycleLen').value) || 28)), updated: Date.now()};
+      Store.set('cycle', c); show(c);
+      if (window.Progress && Progress.invalidate) Progress.invalidate();
+    }
+    $('cycleRow').onclick = function (e) {
+      if (!e.target || !e.target.getAttribute('data-cycle')) return;
+      buzz(); $('cycleRow').querySelector('[data-cycle]').classList.toggle('on'); save();
+    };
+    $('cycleStart').onchange = save; $('cycleLen').onchange = save;
+    $('cycleInclude').checked = !!(window.Backup && Backup.includeCycle && Backup.includeCycle());
+  }).catch(function () {});
+  if ($('cycleInclude')) $('cycleInclude').onchange = function () {
+    if (window.Backup && Backup.setIncludeCycle) Backup.setIncludeCycle($('cycleInclude').checked);
+  };
+}
+var FAV_LIFTS = ['Bench Press (Barbell)', 'Squat (Barbell)', 'Deadlift (Barbell)', 'Overhead Press (Barbell)',
+  'Bent Over Row (Barbell)', 'Romanian Deadlift (Barbell)', 'Chin Up', 'Pull Up (Weighted)', 'Hip Thrust (Barbell)'];
+function favSelect(id, current) {
+  return '<select class="txt" id="' + id + '" style="margin:0 0 8px"><option value="">Favourite lift (optional)</option>' +
+    FAV_LIFTS.map(function (n) { return '<option value="' + esc(n) + '"' + (n === current ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('') + '</select>';
+}
+/* ---------- Help: how to use the app (plain topics; the first one is open) */
+var HELP_TOPICS = [
+  ['Getting started',
+    '<ul><li><b>Android:</b> install the APK from the download page. To update, install the new APK over the old one: your data is kept.</li>' +
+    '<li><b>iPhone, or any computer:</b> open the web app in the browser. On iPhone use Share → Add to Home Screen so it runs full-screen.</li>' +
+    '<li><b>First time:</b> choose which benchmark table to compare you with, your goal, and (all optional) bodyweight, height and favourite lift. ' +
+    'Enter a recent set for any lifts you know to set your starting level, or skip. You can change all of this later in Settings.</li>' +
+    '<li>No account is needed. Your workouts stay on your device.</li></ul>'],
+  ['Doing a workout',
+    '<ul><li>On Home, tap a routine to preview it, then start it. <b>Quick cardio</b> is for runs, bike, rowing and similar.</li>' +
+    '<li>For each exercise you get a suggested weight and reps. Adjust them with the steppers, then log the set. A rest timer starts. <b>Undo</b> removes the last set.</li>' +
+    '<li>A <b>PR</b> badge appears when you beat a personal record. Warm-up sets are suggested for heavy lifts.</li>' +
+    '<li>Under each exercise: <b>History</b> (that lift’s past sessions), <b>Swap</b> (pick an alternative), <b>Note</b> (add a note to remember).</li>' +
+    '<li>Finish when you are done. You see a summary, and a level-up screen if you earned one.</li></ul>'],
+  ['Routines and exercises',
+    '<ul><li><b>+ New routine</b> builds your own list of exercises. Use the edit button on a routine to change or delete it.</li>' +
+    '<li>About 190 preset exercises are included. You can also add your own exercises.</li></ul>'],
+  ['Progress, levels and charts',
+    '<ul><li>Your <b>lifter level</b> (1–50) and tier come from your best lifts compared with benchmark standards for your bodyweight. Each muscle has its own level.</li>' +
+    '<li><b>Progress &amp; charts</b> shows training per week, a consistency calendar, level over time, sets per muscle, strength by muscle, bodyweight, a PR timeline, ' +
+    'and per exercise estimated 1RM, heaviest, volume and reps. One period filter (1M to All) applies to everything, and every chart has a table view.</li>' +
+    '<li>Levels are rough estimates, not a test. See <b>About these estimates</b> in Settings.</li></ul>'],
+  ['Calendar and past workouts',
+    '<ul><li><b>Calendar, profile &amp; photos</b> shows a month grid of your gym days with streaks. Tap a day to see what you did.</li>' +
+    '<li>Tap an empty past day to <b>log a workout you did then</b>. You cannot log future days.</li>' +
+    '<li>To change or delete a workout, open it from All workouts or from its day on the calendar.</li></ul>'],
+  ['Your body (muscle map)',
+    '<ul><li>The body map on Home colours each muscle by this week’s sets, by recovery, or by strength level. Tap a muscle for details. The play button replays your training week by week.</li></ul>'],
+  ['Photos and your character',
+    '<ul><li>Pick a skin tone for the cartoon character, or use your own full-body photo.</li>' +
+    '<li>Progress photos are <b>private by default</b> and stay on your device. You can mark single photos Public so friends can see them.</li></ul>'],
+  ['Friends and sharing',
+    '<ul><li>On Home, open the Friends card to join with a friend code or invite link, and to share your own code. Adding a code makes you friends both ways. Unfriend any time, or reset your code so an old one stops working.</li>' +
+    '<li>Only friends can see your profile. <b>Share my stats</b> controls it: off means friends see only your name and level.</li>' +
+    '<li>In Settings you can also choose to show your <b>weight, height and favourite lift</b> on your profile (all off by default).</li>' +
+    '<li>Your <b>cycle data</b> and your sex setting are never shared with anyone.</li>' +
+    '<li>Keep your <b>recovery key</b> safe: it restores your friends login if you change phone.</li>' +
+    '<li>Friends data is kept on the app’s friends server. Everything else stays on your device.</li></ul>'],
+  ['Using the web app and the Android app together',
+    '<ul><li>The browser (or iPhone) version and the Android app <b>each keep their own data on their own device</b>. They do not sync automatically.</li>' +
+    '<li>To move or copy your data: on one, Settings → <b>Download backup (JSON)</b>. On the other, Settings → <b>Restore a backup</b>. ' +
+    'Choose Merge to keep what is already on that device.</li>' +
+    '<li>To keep things simple, log workouts in one place and use backups to copy them across.</li>' +
+    '<li>Your friends profile follows you with the recovery key or login link, not the backup file.</li></ul>'],
+  ['Wear OS watch (Android phones only)',
+    '<ul><li>The <b>Gym Companion watch app</b> logs sets on your wrist and stays in step with this app over the normal watch–phone link: no account, no server, nothing extra to set up. It needs the Android app (not the website) and a Wear OS watch paired to the same phone. It does not work with iPhone.</li>' +
+    '<li>Open the Android app once so your routines reach the watch. Start a workout on the watch or the phone; both show the same session.</li>' +
+    '<li>The watch keeps working if the phone is away and catches up when they reconnect. Only your routines, the live workout and your level go to the watch. Nothing else (sex, cycle, weight, photos, friends) is sent.</li>' +
+    '<li>Install the watch app from the Gym Companion download page.</li></ul>'],
+  ['Backups and export',
+    '<ul><li><b>Download backup (JSON)</b> saves everything. Restore it on any device. Make one before changing phone.</li>' +
+    '<li><b>Download workouts (CSV)</b> gives a spreadsheet of your workouts that opens in any spreadsheet app.</li></ul>'],
+  ['Settings explained',
+    '<ul><li><b>Theme and colours:</b> pick a theme, or set your own colours for buttons, text, background and cards.</li>' +
+    '<li><b>Benchmarks:</b> Female uses the women’s 18–39 table; Male or Prefer not to say uses the men’s 18–39 table. It only changes the levels you are compared with.</li>' +
+    '<li><b>Goal</b> adds a matching routine (Muscle &amp; tone adds Glutes &amp; core; Core &amp; mobility adds Core &amp; mobility). It never removes your own routines.</li>' +
+    '<li><b>Cycle (optional)</b> appears only if you chose Female. It is a collapsible section, stays on your phone and is only in a backup if you tick the box.</li></ul>'],
+  ['Privacy',
+    '<ul><li>No analytics and no ads. Workouts, photos and settings stay on your device.</li>' +
+    '<li>Backup files contain health data: keep them somewhere secure.</li>' +
+    '<li>Only what you choose to share goes to friends, and only to people you added.</li></ul>']
+];
+function helpSheet() {
+  openSheet('<h2 style="margin:0 0 4px;font-size:24px">How to use the app</h2>' +
+    '<p class="sub" style="margin-bottom:10px">Tap a topic to open it.</p>' +
+    HELP_TOPICS.map(function (t, i) {
+      return '<details class="helpTopic"' + (i === 0 ? ' open' : '') + ' style="background:var(--card);border-radius:14px;padding:4px 14px;margin-bottom:8px">' +
+        '<summary style="cursor:pointer;font-weight:750;font-size:15px;padding:10px 0">' + esc(t[0]) + '</summary>' +
+        '<div class="sub" style="font-size:13.5px;line-height:1.5;padding:0 0 10px">' + t[1] + '</div></details>';
+    }).join(''));
+}
+function estimatesSheet() {
+  openSheet('<h2 style="margin:0 0 4px;font-size:24px">About these estimates</h2>' +
+    '<p class="sub">Levels compare your best lifts with published 18–39 benchmarks. If you choose Female, ' +
+    'the ExRx women 18–39 table is used; other lifts are scaled estimates. If you choose Male or prefer not to say, ' +
+    'the men\u2019s 18–39 table is used.</p>' +
+    '<p class="sub">These are rough population averages — not a test, a prediction, or medical advice. ' +
+    'Technique, training history, age, body composition and the 1-rep-max formula all affect the result. ' +
+    'Your own trend matters more than the badge. If something hurts, ask a qualified professional.</p>');
+}
 /* ---------- UI theme: surface palette, saved via Store so it is in backups */
 var THEMES = [
   {id: 'volt', name: 'Volt', color: '#d7ff3e'},
   {id: 'midnight', name: 'Midnight', color: '#63d7ff'},
-  {id: 'ember', name: 'Ember', color: '#ff9d5c'}
+  {id: 'ember', name: 'Ember', color: '#ff9d5c'},
+  {id: 'bloom', name: 'Bloom', color: '#e879f9'}
 ];
 var ACCENT = '#d7ff3e', ACCENT_DARK = '#3a4718', ACCENT_DIM = '#5e7420';
 var ACCENT_VARS = ['--volt', '--volt2', '--volt-rgb', '--volt-dark', '--volt-dim', '--voltglow', '--accent-text'];
@@ -699,7 +873,7 @@ function workoutsSheet() {
 }
 $('allWorkouts').onclick = function () { buzz(); workoutsSheet(); };
 /* The one past-workout editor (v1.3 / v1.9): edits a saved workout, or with no id + {date} adds one on an earlier day
- * (calendar "Add workout on <date>"). Hevy imports open read-only. */
+ * (calendar "Add workout on <date>"). Server-held history rows open read-only. */
 function hhmm(d) { return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
 function todayStr() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 function workoutEditor(id, opts) {
@@ -716,7 +890,7 @@ function workoutEditor(id, opts) {
     function newInterval(prev) { return {w: 0, r: 0, type: 'cardio', mode: (prev && prev.mode) || 'run', sec: 0, km: 0, kmh: (prev && prev.kmh) || 0, kcal: 0}; }
     openSheet('<h2 style="margin:0 0 2px;font-size:24px">' + (isNew ? 'Add workout' : ro ? 'Workout' : 'Edit workout') + '</h2>' +
       '<p class="sub" style="margin-bottom:12px" id="weWhen">' + esc(wDay(w)) + (!isNew && w.duration_min ? ' \u00b7 ' + w.duration_min + ' min' : '') + '</p>' +
-      (ro ? '<p class="wro">Imported from Hevy, so it\u2019s read-only here (the next Hevy export would overwrite any change).</p>' + (w.note ? '<p class="wro">' + esc(w.note) + '</p>' : '')
+      (ro ? '<p class="wro">This workout comes from your server\u2019s imported history, so it\u2019s read-only here.</p>' + (w.note ? '<p class="wro">' + esc(w.note) + '</p>' : '')
           : '<input class="txt" id="weTitle" value="' + esc(w.title) + '" placeholder="Workout name (e.g. Push)" autocomplete="off">' +
             '<div class="wmeta">' + (isNew ? '<label>Start time<input class="txt num" id="weTime" type="time" value="' + t0 + '"></label>' : '') +
             '<label>Duration (min)<input class="txt num" id="weMin" type="number" inputmode="numeric" min="0" max="600" value="' + (w.duration_min || '') + '" placeholder="0"></label></div>' +
@@ -1642,20 +1816,28 @@ function onboardSheet() {
   }).join('');
   openSheet('<h2 style="margin:0 0 4px;font-size:24px">Set your starting level</h2>' +
     '<p class="sub" style="margin-bottom:10px">Enter a recent working set (kg × reps) for each lift you know. Leave the rest blank. ' +
-    'This sets your character level — no fake workout history is created.</p>' +
+    'This sets your character level — no fake workout history is created. Levels are rough estimates, not a test.</p>' +
+    (IS_PUBLIC ? choiceRow('sex', 'How should we calibrate estimates?', SEXES, null) +
+      choiceRow('goal', 'What are you training for?', GOALS, 'general') : '') +
     toneRow() +
-    '<input class="txt num" id="onBw" type="number" min="30" max="250" step="0.1" placeholder="Bodyweight kg" value="75">' +
+    '<div class="label" style="margin:2px 0 4px">About you (all optional, stays on this phone)</div>' +
+    '<input class="txt num" id="onBw" type="number" min="30" max="250" step="0.1" placeholder="Bodyweight kg (optional)" value="">' +
+    (IS_PUBLIC ? '<input class="txt num" id="onHt" type="number" min="100" max="250" step="1" placeholder="Height cm (optional)" value="">' +
+      favSelect('onFav', null) : '') +
     rows + '<button class="log" id="onSave">Create my routines</button>' +
+    '<button class="finish" id="onHelp">\u2753 How does this app work?</button>' +
     '<button class="danger" id="onSkip">Skip for now</button>');
+  $('onHelp').onclick = function () { buzz(); helpSheet(); };
   wireToneRow();
+  var sexBox = {value: null}, goalBox = {value: 'general'};
+  wireChoiceRow('sex', sexBox); wireChoiceRow('goal', goalBox);
   $('onSave').onclick = function () {
     var maxes = {};
     Array.prototype.forEach.call($('sheetBody').querySelectorAll('.cxw'), function (inp) {
       var w = parseFloat(inp.value), name = inp.getAttribute('data-ex');
       if (w > 0) maxes[name] = {w: w, r: parseInt(inp.parentNode.querySelector('.cxr').value, 10) || 5};
     });
-    var bw = parseFloat($('onBw').value) || 75;
-    Store.onboard({bodyweight: bw, maxes: maxes}).then(function () {
+    Store.onboard({bodyweight: parseFloat($('onBw').value) || 0, height: $('onHt') ? parseFloat($('onHt').value) || 0 : 0, favLift: $('onFav') ? $('onFav').value : '', maxes: maxes, sex: sexBox.value, goal: goalBox.value}).then(function () {
       closeSheet(); toastOk('Ready — edit or add routines anytime'); loadPlan(); loadProgress();
     }).catch(function () { toast('Could not save setup'); });
   };
@@ -1757,9 +1939,21 @@ function photoSheet() {
 }
 
 function settingsSheet() {
+  var ABOUT = IS_PUBLIC || !!(Store && Store.remote);   // owner (server-linked) mode keeps these on the phone too, for the friends profile
   openSheet('<h2 style="margin:0 0 4px;font-size:24px">Settings & backup</h2>' +
     '<p class="sub" style="margin-bottom:12px">' + (IS_PUBLIC ? 'All data stays on this phone. Back up before changing device.' : 'Your data lives on your private server. Download a copy anytime.') + '</p>' +
+    '<button class="finish" id="setHelp" style="margin:0 0 10px">\u2753 How to use the app</button>' +
     toneRow() + charRow() + themeRow() + colorRow() +
+    (IS_PUBLIC ? choiceRow('sex', 'How should we calibrate estimates?', SEXES, null) +
+    choiceRow('goal', 'What are you training for?', GOALS, null) : '') +
+    (ABOUT ? '<div class="label" style="margin:10px 0 4px">About you (optional, stays on this phone)</div>' +
+    '<input class="txt num" id="setBw" type="number" inputmode="decimal" min="25" max="300" step="0.1" placeholder="Weight kg (optional)">' +
+    '<input class="txt num" id="setHt" type="number" min="100" max="250" step="1" placeholder="Height cm (optional)">' +
+    favSelect('setFav', null) +
+    '<div class="sub" style="margin:2px 0 4px;font-size:12.5px">Show on my friends profile (off by default; only friends you added can see it):</div>' +
+    '<div class="char-row" id="shareBodyRow"><button data-sb="w">Weight</button><button data-sb="h">Height</button><button data-sb="f">Favourite lift</button></div>' : '') +
+    (IS_PUBLIC ? cycleRow() : '') +
+    '<button class="finish" id="setEstimates">About these estimates</button>' +
     '<button class="log" id="setBackup" style="margin-top:4px">↓ Download backup (JSON)</button>' +
     '<button class="finish" id="setCsv">↓ Download workouts (CSV)</button>' +
     (IS_PUBLIC ? '<button class="finish" id="setRestore">↑ Restore a backup</button>' +
@@ -1767,7 +1961,52 @@ function settingsSheet() {
     '<p class="sub" style="margin:14px 0 0;font-size:12.5px">Backups contain health data — store the file securely.</p>' +
     (IS_PUBLIC ? '<p class="sub" id="setAbout" style="margin:10px 0 0;font-size:13px"><a href="https://teo2301.github.io/gym-companion/download.html" target="_blank" rel="noopener" style="color:var(--accent-text)">About, what\u2019s new &amp; download</a>' +
       ' \u00b7 <a href="https://teo2301.github.io/gym-companion/privacy.html" target="_blank" rel="noopener" style="color:var(--accent-text)">Privacy</a></p>' : ''));
-  wireToneRow(); wireCharRow(); wireThemeRow(); wireColorRow();
+  wireToneRow(); wireCharRow(); wireThemeRow(); wireColorRow(); wireCycleRow();
+  if (IS_PUBLIC) {     // sex, goal and cycle only exist in the public (on-phone) app: the owner's server computes levels
+  var sexBox = {value: null}, goalBox = {value: null};
+  wireChoiceRow('sex', sexBox, function (id) {
+    Store.set('sex', id === 'none' ? null : id); showCycleFor(id);
+    if (window.Progress && Progress.invalidate) Progress.invalidate();
+    loadProgress();
+  });
+  wireChoiceRow('goal', goalBox, function (id) {
+    Store.set('goal', id).then(function () { return Store.addGoalRoutine ? Store.addGoalRoutine(id) : null; })
+      .then(function (r) { if (r && r.added) toast('Added routine: ' + r.name); loadPlan(); });
+  });
+  Store.get('sex').then(function (s) { sexBox.value = s || null; markChoice('sex', s || 'none'); showCycleFor(s); });
+  Store.get('goal').then(function (g) { goalBox.value = g || null; markChoice('goal', g || 'general'); });
+  }
+  if (ABOUT) {
+  Store.get('shareBody').then(function (sb) {
+    sb = sb || {};
+    Array.prototype.forEach.call($('shareBodyRow').querySelectorAll('button'), function (b) { b.classList.toggle('on', !!sb[b.getAttribute('data-sb')]); });
+  });
+  $('shareBodyRow').onclick = function (e) {
+    var k = e.target && e.target.getAttribute('data-sb'); if (!k) return;
+    buzz(); e.target.classList.toggle('on');
+    var sb = {};
+    Array.prototype.forEach.call($('shareBodyRow').querySelectorAll('button'), function (b) { sb[b.getAttribute('data-sb')] = b.classList.contains('on'); });
+    Store.set('shareBody', sb).then(function () { if (window.Social && Social.joined && Social.joined()) Social.sync(true); });
+  };
+  Store.get('bodyweight').then(function (v) { if (v > 0) $('setBw').value = v; });
+  Store.get('height').then(function (v) { if (v) $('setHt').value = v; });
+  Store.get('favLift').then(function (v) { if (v) $('setFav').value = v; });
+  $('setBw').onchange = function () {
+    var v = Math.round(parseFloat($('setBw').value) * 10) / 10;
+    if (!(v >= 25 && v <= 300)) { toast('Enter a weight between 25 and 300 kg'); return; }
+    // on-phone app: a weigh-in (also drives the levels); server-linked app: kept on the phone for the friends profile
+    (Store.canLogBodyweight && Store.logBodyweight ? Store.logBodyweight(v) : Store.set('bodyweight', v)).then(function () {
+      toastOk('Weight saved');
+      if (window.Progress && Progress.invalidate) Progress.invalidate();
+      loadProgress();
+      if (window.Social && Social.joined && Social.joined()) Social.sync(true);
+    }).catch(function (err) { toast(err && err.message || 'Could not save'); });
+  };
+  $('setHt').onchange = function () { var v = Math.round(parseFloat($('setHt').value)); Store.set('height', v >= 100 && v <= 250 ? v : null); if (window.Social && Social.joined && Social.joined()) Social.sync(true); };
+  $('setFav').onchange = function () { Store.set('favLift', $('setFav').value || null); if (window.Social && Social.joined && Social.joined()) Social.sync(true); };
+  }
+  $('setEstimates').onclick = function () { buzz(); estimatesSheet(); };
+  $('setHelp').onclick = function () { buzz(); helpSheet(); };
   $('setBackup').onclick = function () { Backup.exportJson(); };
   $('setCsv').onclick = function () { Backup.exportCsv(); };
   if (IS_PUBLIC) {
@@ -1777,7 +2016,7 @@ function settingsSheet() {
 }
 
 /* ---------- boot */
-(function () {   // test hooks: #static&hist=NAME / &prev=ROUTINE / &edit=ROUTINE / &settings / &theme=ID / &btn=HEX&text=HEX (screenshots)
+(function () {   // test hooks: #static&hist=NAME / &prev=ROUTINE / &edit=ROUTINE / &settings / &onboarding / &theme=ID / &btn=HEX&text=HEX (screenshots)
   var h = location.hash, m;
   if ((m = h.match(/theme=([^&]+)/))) applyTheme(decodeURIComponent(m[1]));
   if (/btn=|text=/.test(h)) applyAccentOverrides(
@@ -1787,7 +2026,13 @@ function settingsSheet() {
     openSheet('<h2 style="margin:0 0 4px;font-size:24px">Settings &amp; backup</h2>' + themeRow() + colorRow());
     var tries = 0, st = setInterval(function () {
       if (!Store && ++tries < 50) return;
-      clearInterval(st); if (Store) wireColorRow();
+      clearInterval(st); if (Store) settingsSheet();
+    }, 100);
+  }
+  if (h.indexOf('onboarding') >= 0) {
+    var tries2 = 0, st2 = setInterval(function () {
+      if (!Store && ++tries2 < 50) return;
+      clearInterval(st2); if (Store) setTimeout(onboardSheet, 50);
     }, 100);
   }
   if ((m = h.match(/hist=([^&]+)/))) { var hn = decodeURIComponent(m[1]); setTimeout(function () { historySheet(hn); }, 400); }
@@ -1803,6 +2048,7 @@ function settingsSheet() {
 tickClock();
 GymStore.create({}).then(function (s) {
   Store = s; IS_PUBLIC = Store.mode === 'public'; window.Store = Store; window.IS_PUBLIC = IS_PUBLIC;
+  if (window.GymWatch) GymWatch.attach(Store);   // Android app only: keeps the paired watch in step
   if (window.Backup) Backup.init(Store);
   updateHello();
   $('openProg').onclick = function () { buzz(); Progress.open(); };

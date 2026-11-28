@@ -104,7 +104,7 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
         problems.append("header should show the Gym Companion logo + name")
     import re as _re
     now_line = page.inner_text("#nowLine")
-    if not _re.fullmatch(r"[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2,3} · \d{2}:\d{2}", now_line):
+    if not _re.fullmatch(r"[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2,3} · W\d{1,2} · \d{2}:\d{2}", now_line):
         problems.append(f"header date/time looks wrong: {now_line!r}")
     head_txt = page.inner_text("#home .wrap > h1") + page.inner_text("#brand")
     if _re.search(r"morning|afternoon|evening", head_txt, _re.I):
@@ -399,7 +399,7 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     if not refs or not any("Intermediate" in r or "Novice" in r or "Advanced" in r for r in refs):
         problems.append(f"no strength-standard lines on the 1RM chart: {refs}")
     std = page.inner_text("#exStd")
-    if "Strength standards for 81.5 kg bodyweight" not in std or "Elite" not in std:
+    if "Estimated benchmarks at 81.5 kg bodyweight" not in std or "Elite" not in std:
         problems.append(f"standards text wrong: {std!r}")
     proj = page.inner_text("#exProj")
     if not proj.startswith("At your recent rate") or " by " not in proj:

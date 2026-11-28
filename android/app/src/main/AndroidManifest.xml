@@ -24,6 +24,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- watch link: receives the watch's actions over the Wear OS Data Layer, even when the app is closed -->
+        <service android:name=".WearListener" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/gym/op/" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

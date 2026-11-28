@@ -97,6 +97,7 @@ class MainActivity : ComponentActivity() {
             allowContentAccess = false
         }
         webView.addJavascriptInterface(GymBridge(), "GymBridge")
+        webView.addJavascriptInterface(GymWatchNative(applicationContext), "GymWatchNative")   // watch link
         webView.webChromeClient = object : WebChromeClient() {
             override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>,
                                            params: FileChooserParams): Boolean {
@@ -161,14 +162,20 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) { super.onSaveInstanceState(outState); webView.saveState(outState) }
-    override fun onPause() { super.onPause(); webView.onPause() }
-    override fun onResume() { super.onResume(); webView.onResume() }
+    override fun onPause() { super.onPause(); if (current === this) current = null; webView.onPause() }
+    override fun onResume() { super.onResume(); current = this; webView.onResume() }
+    override fun onDestroy() { if (current === this) current = null; super.onDestroy() }
+
+    /** The watch sent something: have the page apply it and answer (watchlink.js). */
+    fun pokeWatch() {
+        webView.evaluateJavascript("window.GymWatch && GymWatch.poke()", null)
+    }
 
     /** Only the bundled app (https://appassets.androidplatform.net/assets/gym/...) stays in the WebView. */
     private fun isAssetUrl(uri: Uri): Boolean =
         uri.scheme == "https" && uri.host == ASSET_HOST && (uri.path ?: "").startsWith("/assets/gym/")
 
-    /** Real MIME type so other apps open exports properly (JSON backup, Hevy-style CSV). */
+    /** Real MIME type so other apps open exports properly (JSON backup, CSV). */
     private fun mimeFor(fileName: String): String = when (fileName.substringAfterLast('.', "").lowercase()) {
         "json" -> "application/json"
         "csv" -> "text/csv"
@@ -237,6 +244,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        /** The visible activity, if any (the watch listener pokes it instead of starting a background page). */
+        @Volatile var current: MainActivity? = null
         /** Closes the top-most layer of the Gym page; returns true if it handled Back. */
         private const val PAGE_BACK_JS = """(function () {
   var on = function (id) { var e = document.getElementById(id); return !!(e && e.classList.contains('on')); };

@@ -272,7 +272,8 @@ def clean_profile(b):
     """Whitelist the stats snapshot friends can view: level, muscle levels, headline stats, recent workout cards,
     and (v1.19) the dated workout list for the calendar + the numbers behind every Progress card. Everything is
     re-built field by field from known keys with clamped numbers and short cleaned strings; nothing else survives.
-    {shared: false} (the "Share my stats" switch is off) keeps only the name (on the account) and the level."""
+    {shared: false} (the "Share my stats" switch is off) keeps only the name (on the account) and the level.
+    The optional "body" block (weight / height / favourite lift) is accepted only when shared is on."""
     b = b if isinstance(b, dict) else {}
     base = {"lv": _num(b.get("lv"), 0, 50), "tier": clean_text(b.get("tier"), 20),
             "score": _num(b.get("score"), -1, 5, 3), "xp": _num(b.get("xp"), 0, 1, 3)}
@@ -308,7 +309,24 @@ def clean_profile(b):
                       "streak_weeks": _num(st.get("streak_weeks"), 0, 1000), "avg_week": _num(st.get("avg_week"), 0, 50, 1),
                       "since": clean_text(st.get("since"), 10)})
     out["progress"] = clean_progress(b.get("progress"))
+    out["body"] = clean_body(b.get("body"))
     return out
+
+
+def clean_body(v):
+    """Optional "about me" the user chose to show friends: weight (kg), height (cm), favourite lift. Each key is
+    present only if the person ticked it in the app; the app never sends it otherwise. Clamped and cleaned."""
+    if not isinstance(v, dict):
+        return None
+    out = {}
+    if v.get("bw") is not None:
+        out["bw"] = _num(v["bw"], 20, 400, 1)
+    if v.get("ht") is not None:
+        out["ht"] = _num(v["ht"], 100, 250, 0)
+    fav = clean_text(v.get("fav"), 80)
+    if fav:
+        out["fav"] = fav
+    return out or None
 
 
 def clean_progress(p):

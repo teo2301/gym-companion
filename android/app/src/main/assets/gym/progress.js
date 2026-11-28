@@ -237,7 +237,7 @@ function render() {
   html += card('mus', 'Muscles trained', 'Average sets per week. Most people grow best with about 10–20 per muscle.');
   html += card('grp', 'Muscle-group trends', 'Sets per week for each group, all on the same scale.');
   html += card('split', 'Training split', 'Share of your sets by muscle group in this period.');
-  html += card('str', 'Strength by muscle', FRIEND ? 'Best lift for each muscle against bodyweight standards.' : 'Your best lift for each muscle against bodyweight standards. Tap one for its chart.');
+  html += card('str', 'Strength by muscle', FRIEND ? 'Best lift per muscle against estimated benchmarks.' : 'Your best lift per muscle against estimated benchmarks. Tap one for its chart.');
   if (!FRIEND) html += card('bw', 'Bodyweight', null, '');
   html += '<div class="pgcard"><div class="pgch"><h3>Personal records</h3><span class="pgsub" style="margin:0">' + P.length + ' in this period</span></div><div id="pg_prs"></div></div>';
   html += '<div class="pgcard"><div class="pgch"><h3>Exercises</h3></div><input class="search" id="pgSearch" placeholder="' + (FRIEND ? 'Search exercises…' : 'Search your exercises…') + '" autocomplete="off" style="margin:6px 0 4px"><div id="pg_ex"></div></div>';
@@ -561,12 +561,13 @@ function hasK(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); 
 /* Strength-standard thresholds for this lift at this bodyweight, in the units the lift is logged in
  * (bodyweight-loaded lifts log the ADDED weight, so the bodyweight is taken off). Same tables and order
  * as rateLift/gym_progress (official > approximate). null when the lift has no standard. */
-function standardsFor(name, bw) {
+function standardsFor(name, bw, sex) {
   var G = window.GymCore; if (!G || !(bw > 0)) return null;
   var loaded = hasK(G.BODYWEIGHT_LOADED, name), off = hasK(G.STRENGTH_STANDARDS, name);
-  var th = loaded ? G.BODYWEIGHT_LOADED[name] : off ? G.STRENGTH_STANDARDS[name] : hasK(G.APPROX, name) ? G.APPROX[name] : null;
+  var th = G.standardsFor ? G.standardsFor(name, bw, sex) :
+    (loaded ? G.BODYWEIGHT_LOADED[name] : off ? G.STRENGTH_STANDARDS[name] : hasK(G.APPROX, name) ? G.APPROX[name] : null);
   if (!th) return null;
-  return {approx: !loaded && !off, loaded: loaded, bw: bw, levels: th.map(function (r, i) {
+  return {approx: !loaded && !off, loaded: loaded, bw: bw, sex: sex || null, levels: th.map(function (r, i) {
     return {level: G.LEVELS[i], kg: Math.round(10 * (r * bw - (loaded ? bw : 0))) / 10};
   }).filter(function (l, i) { return i > 0 && l.kg > 0; })};          // Novice .. Elite (Beginner is the floor)
 }
@@ -628,7 +629,9 @@ function exerciseSheet(name) {
       '</div><div id="exChart"></div><div class="pgnote" id="exNote"></div><div class="pgnote" id="exStd"></div><div class="pgnote" id="exProj"></div></div>' +
       '<div class="pgcard"><div class="pgch"><h3>Rep maxes</h3></div><p class="pgsub">Heaviest weight you’ve lifted for at least that many reps.</p><div id="exReps"></div></div>' +
       '<div class="pgcard"><div class="pgch"><h3>Recent sessions</h3></div><div id="exSess"></div></div>');
-    var bw = prog && prog.bodyweight, std = standardsFor(name, bw);
+    var bw = prog && prog.bodyweight;
+    var sex = prog && prog.benchmarks && prog.benchmarks.sex;
+    var std = standardsFor(name, bw, sex === 'female' || sex === 'male' ? sex : null);
     var proj = projection(S.map(function (s) { return {date: s.date, e1rm: s.e1rm}; }), std && std.levels);
     var exTable = false;
     function draw() {
@@ -651,8 +654,12 @@ function exerciseSheet(name) {
       q('exNote').innerHTML = lab + (V.length >= 2 && first ? ': <b>' + (last >= first ? '+' : '') + Math.round(100 * (last - first) / first) + '%</b> ' +
         (exRange === 'all' ? 'since your first session' : 'in this period') : '') +
         (exMetric === 'e1rm' ? ' · <span style="color:#ffb020">●</span> = PR' : '') + '.';
-      q('exStd').innerHTML = exMetric === 'e1rm' && std ? 'Strength standards' + (std.approx ? ' (approximate)' : '') + ' for ' + kg(std.bw) + ' kg bodyweight' +
-        (std.loaded ? ', added weight' : '') + ': ' + std.levels.map(function (l) { return e(l.level) + ' <b>' + kg(l.kg) + '</b>'; }).join(' · ') + ' kg.' : '';
+      q('exStd').innerHTML = exMetric === 'e1rm' && std ? 'Estimated benchmarks' + (std.approx ? ' (approximate)' : '') +
+        (std.sex === 'female' ? ' for women 18–39' : std.sex === 'male' ? ' for men 18–39' : '') +
+        ' at ' + kg(std.bw) + ' kg bodyweight' + (std.loaded ? ', added weight' : '') + ': ' +
+        std.levels.map(function (l) { return e(l.level) + ' <b>' + kg(l.kg) + '</b>'; }).join(' · ') + ' kg. ' +
+        '<button class="pgtab" id="exAboutStd">About these estimates</button>' : '';
+      if (q('exAboutStd')) q('exAboutStd').onclick = function () { if (window.estimatesSheet) estimatesSheet(); };
       q('exProj').innerHTML = exMetric === 'e1rm' && proj ? 'At your recent rate (<b>+' + kg(proj.perMonth) + ' kg</b> a month over your last sessions) you reach <b>' +
         (proj.level ? e(proj.level) + ', ' : '') + kg(proj.target) + ' kg</b> by <b>' + e(niceDate(dstr(proj.date))) + '</b>.' : '';
       q('exSess').innerHTML = V.slice(-10).reverse().map(function (s) {

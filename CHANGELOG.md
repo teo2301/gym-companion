@@ -3,6 +3,16 @@
 Every release updates this file first; the download page ("What's new", `tools/site/download.html`)
 and the GitHub release notes are written from it. Newest first. Dates are release dates.
 
+## 1.21 — 28 Nov 2026: benchmarks for everyone, goals, help and the watch app
+
+- **Sex-aware strength benchmarks, goals, optional body fields, Bloom theme, in-app help** (see the
+  web app's Settings). The women's benchmark table was checked against ExRx (Adult Women, ages 18-39), all values match.
+- **Wear OS watch app** (`gym-companion-watch.apk`, same package and key as the phone app): log sets on the watch;
+  it talks only to your paired phone over the Wear OS Data Layer. No server, no account, no INTERNET permission.
+  The phone app applies the watch's actions (even when closed, via a short invisible background page) and sends back
+  the live workout, your routines and your level. Nothing else is sent to the watch.
+- Friends profile can show weight / height / favourite lift, only if you switch each on (server patch in `server/social.py`).
+
 ## 1.20 — 28 Nov 2026: themes and fully customisable colours
 
 - **Themes:** Volt (lime), Midnight (blue) and Ember (orange), in Settings.

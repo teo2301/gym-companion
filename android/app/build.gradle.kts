@@ -20,8 +20,8 @@ android {
         applicationId = "io.github.teo2301.gymcompanion"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.20"
+        versionCode = 21
+        versionName = "1.21"
     }
 
     signingConfigs {
@@ -55,4 +55,8 @@ kotlin {
 dependencies {
     implementation("androidx.activity:activity-ktx:1.13.0")
     implementation("androidx.webkit:webkit:1.18.0")
+    implementation("com.google.android.gms:play-services-wearable:19.0.0")   // Wear OS Data Layer (watch link)
+    implementation("androidx.fragment:fragment:1.8.9")   // play-services-wearable drags in an ancient fragment that lint rejects for the activity-result API
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")   // real org.json for JVM unit tests (android.jar only has stubs)
 }

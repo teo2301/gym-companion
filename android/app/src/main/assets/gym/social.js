@@ -137,7 +137,7 @@ function styles() {
     '.sfr{display:flex;align-items:center;gap:10px;background:var(--card);border-radius:14px;padding:8px 10px;margin-bottom:6px}.sfr b{flex:1}.sfr button{color:var(--dim);font-size:13.5px;padding:8px}',
     '.spick{display:flex;align-items:center;gap:12px;margin:4px 0 12px}.spick label{height:44px;padding:0 16px;border-radius:14px;background:var(--card2);display:flex;align-items:center;font-weight:700;color:var(--volt)}',
     '.spick input{display:none}.sprev{width:84px;height:84px;border-radius:14px;object-fit:cover}',
-    '.sdash{flex:1;min-width:96px;height:44px;border-radius:14px;background:var(--card2);color:var(--text);font-weight:700;font-size:14.5px;display:flex;align-items:center;justify-content:center;text-decoration:none}',
+    '.sdash{flex:1;min-width:96px;height:44px;border-radius:14px;background:var(--card2);color:var(--text);font-weight:700;font-size:14.5px;display:flex;align-items:center;justify-content:center;text-decoration:none;border:0;font-family:inherit;cursor:pointer}',
     '.sfn{cursor:pointer}.sfn small{color:var(--dim);font-weight:600;font-size:12.5px;margin-left:4px}',
     '.sph[data-a=prof]{cursor:pointer}',
     '.pvh{display:flex;align-items:center;gap:14px;margin-bottom:14px}',
@@ -170,9 +170,10 @@ function renderHome() {
   }
   box.innerHTML = '<div class="shome"><div id="sMini"><p>Loading…</p></div><div class="sbtns" style="margin-top:10px">' +
     '<button class="pri" id="sOpen">Open feed</button><button id="sFriends">👥 Friends</button>' +
-    (owner && owner.dashboard_url ? '<a class="sdash" href="' + e(owner.dashboard_url) + '" target="_blank" rel="noopener">📊 Dashboard</a>' : '') + '</div></div>';
+    (owner ? '<button class="sdash" id="sDash">📊 Dashboard</button>' : '') + '</div></div>';
   $('sOpen').onclick = function () { buzz(); feedSheet(); };
   $('sFriends').onclick = function () { buzz(); friendsSheet(); };
+  if ($('sDash')) $('sDash').onclick = function () { buzz(); if (window.Progress) Progress.open(); };   // the app's own Progress dashboard, not an external page
   api('GET', '/api/feed').then(function (j) {
     feedCache = j.posts;
     if (!$('sMini')) return;
@@ -345,12 +346,30 @@ function cardFor(w, summary) {
     lifts: lifts.map(function (l) { return {name: l.name, w: l.w, r: l.r, sets: l.sets}; }),
     prs: ((summary && summary.prs) || []).map(function (p) { return p.ex + ' ' + kg(p.w) + ' kg × ' + p.r; })};
 }
+/* Optional "about me" shown on my profile: each of weight / height / favourite lift only if I ticked it (default off). */
+function bodyShare(sb, bw, ht, fav) {
+  var out = {}; sb = sb || {};
+  if (sb.w && bw > 0) out.bw = Math.round(bw * 10) / 10;
+  if (sb.h && ht >= 100 && ht <= 250) out.ht = Math.round(ht);
+  if (sb.f && typeof fav === 'string' && fav) out.fav = fav.slice(0, 80);
+  return Object.keys(out).length ? out : null;
+}
+function aboutLine(b) {
+  if (!b) return '';
+  var parts = [];
+  if (b.ht > 0) parts.push(e(String(b.ht)) + ' cm');
+  if (b.bw > 0) parts.push(e(String(b.bw)) + ' kg');
+  if (b.fav) parts.push('Favourite: ' + e(String(b.fav)));
+  return parts.length ? '<div class="sub" id="pvAbout" style="margin:10px 2px 0">' + parts.join(' · ') + '</div>' : '';
+}
 function buildSnapshot() {
   var o = (window.prog && prog.overall) || null; if (!o || !Store.workouts) return Promise.resolve(null);
   var base = {lv: o.lv, tier: o.tier, score: o.score, xp: ((o.score * 10) % 1)};
   if (!shareOn) { base.shared = false; return Promise.resolve(base); }     // "Share my stats" off: name + level only
-  return Promise.all([Store.workouts(), Store.stats ? Store.stats().catch(function () { return null; }) : null]).then(function (v) {
-    var list = v[0], st = v[1], P = window.prog || {};
+  return Promise.all([Store.workouts(), Store.stats ? Store.stats().catch(function () { return null; }) : null,
+    Store.get('shareBody'), Store.get('height'), Store.get('favLift'), Store.get('bodyweight')]).then(function (v) {
+    // server-linked (owner) mode: a weight typed in Settings wins over the server's figure, since that is what the person chose to show
+    var list = v[0], st = v[1], P = window.prog || {}, body = bodyShare(v[2], (Store.remote && v[5] > 0) ? v[5] : P.bodyweight, v[3], v[4]);
     var total = list.reduce(function (t, w) { return t + (w.total_volume_kg || 0); }, 0);
     var weeks = {}, wk = function (ms) { return Math.floor((ms - 3 * 86400000) / (7 * 86400000)); };   // Monday-based weeks
     list.forEach(function (w) { weeks[wk(w.start)] = 1; });
@@ -364,6 +383,7 @@ function buildSnapshot() {
         var snap = {lv: o.lv, tier: o.tier, score: o.score, xp: ((o.score * 10) % 1), shared: true,
           muscles: Object.keys(P.muscles || {}).map(function (m) { var x = P.muscles[m]; return {name: mn(m), level: x.level, score: x.score, lift: x.lift || ''}; })
             .sort(function (a, b) { return b.score - a.score; }),
+          body: body,
           stats: {workouts: list.length, volume: Math.round(total), streak_weeks: streak, avg_week: Math.round(recent / 12 * 10) / 10, since: oldest},
           workouts: cards.filter(Boolean),
           // calendar: every workout, newest first, compact (date, title, minutes, kg, sets) - nothing else
@@ -485,6 +505,7 @@ function profileView(id) {
       drawPhotos(); return;
     }
     var tc = ['#5b7a99', '#3ea8ff', '#3ee08f', '#d7ff3e', '#ffb020'], ti = p.score < 0 ? -1 : Math.min(4, Math.floor(p.score)), col = ti < 0 ? '#8d94a0' : tc[ti];
+    h += aboutLine(p.body);
     h += '<div class="pvlv"><div class="pvfig">' + (window.Lifter ? Lifter.svg(p.score) : '') + '</div><div class="pvlvt"><small>Lifter level</small>' +
       '<b class="pvnum">' + p.lv + '</b><span style="color:' + col + ';font-weight:800">' + e(p.tier) + '</span>' +
       '<div class="pvbar"><i style="width:' + Math.round(p.xp * 100) + '%;background:' + col + '"></i></div></div></div>';

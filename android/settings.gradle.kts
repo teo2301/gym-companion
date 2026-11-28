@@ -7,3 +7,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "GymCompanion"
 include(":app")
+include(":wear")

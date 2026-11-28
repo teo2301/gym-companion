@@ -5,7 +5,7 @@
 (function (global) {
 'use strict';
 
-var store = null, wired = false;
+var store = null, wired = false, includeCycle = false;
 
 function $(id) { return document.getElementById(id); }
 function say(msg) {
@@ -135,7 +135,7 @@ var Backup = {
 
   exportJson: function () {
     if (!store) return Promise.reject(new Error('Backup not initialised'));
-    return store.backupData().then(function (data) {
+    return store.backupData({includeCycle: includeCycle}).then(function (data) {
       return (global.GymPhoto ? global.GymPhoto.data() : Promise.resolve(null)).then(function (character) {
         if (character) data.character = character;   // photos stay on-device; only this file carries them
         return store.saveFile('gym-backup-' + today() + '.json', JSON.stringify(data, null, 2))
@@ -184,7 +184,9 @@ var Backup = {
 
   snapshotAfterFinish: function () {
     return store && store.snapshot ? store.snapshot().catch(function () {}) : Promise.resolve(null);
-  }
+  },
+  setIncludeCycle: function (v) { includeCycle = !!v; },
+  includeCycle: function () { return includeCycle; }
 };
 
 function num(x) { var v = parseFloat(x); return isFinite(v) ? v : 0; }
