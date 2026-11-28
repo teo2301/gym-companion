@@ -15,7 +15,7 @@ Goal: the best free progress tracking of any gym app. Each item ships on its own
       least-squares fit of the last 8 sessions (only when the trend is positive and n >= 4).
 - [x] **Muscle-group trends (small multiples).** Weekly sets for Push / Pull / Legs / Core as four
       small single-series charts sharing one y-scale (no multi-colour lines), within the period.
-- [ ] **Workout quality.** Per-workout duration and density (kg per minute) trends, plus a "best
+- [x] **Workout quality.** Per-workout duration and density (kg per minute) trends, plus a "best
       workouts" table (highest volume, most sets, longest) within the period.
 - [ ] **Training split.** A segmented bar of the share of sets by muscle group in the period (a
       figure, labelled with %), and a short note when one group dominates (>45%).
