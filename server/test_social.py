@@ -159,6 +159,10 @@ def main():
         s, r, _ = call(base, "GET", "/api/users/%s" % b_me["id"], token=A)
         check(s == 200 and r["profile"]["lv"] == 26 and r["profile"]["workouts"][0]["title"] == "Push", "friend can view a profile")
         check(call(base, "GET", "/api/users/%s" % b_me["id"], token=C)[0] == 404, "non-friend cannot view a profile")
+        # older-app snapshot (no `days`): calendar falls back to its recent workouts
+        call(base, "PUT", "/api/me/profile", {"lv": 5, "workouts": [{"title": "Full Body", "date": "2026-11-27", "minutes": 44, "sets": 12, "volume": 4105, "lifts": []}]}, token=B)
+        pv0 = call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"]
+        check(pv0.get("days") and pv0["days"][0]["d"] == "2026-11-27" and pv0["days"][0]["t"] == "Full Body", "old snapshot still shows its workouts on the calendar")
         call(base, "PUT", "/api/me/profile", {"lv": 9999, "workouts": [{"title": "x" * 500}]}, token=B)
         check(call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"]["lv"] == 50, "profile values are clamped")
         check(call(base, "DELETE", "/api/me/profile", token=B)[0] == 200 and call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"] is None, "profile can be withdrawn")

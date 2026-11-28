@@ -702,8 +702,14 @@ class Handler(BaseHTTPRequestHandler):
             row = con.execute("SELECT data, updated FROM profiles WHERE user_id=?", (u["id"],)).fetchone()
             nposts = con.execute("SELECT COUNT(*) FROM posts WHERE user_id=?", (u["id"],)).fetchone()[0]
             photos = [photo_json(r) for r in con.execute("SELECT * FROM photos WHERE user_id=? ORDER BY date DESC, created DESC", (u["id"],))]
+            prof = json.loads(row["data"]) if row else None
+            if prof and not prof.get("days") and prof.get("workouts"):
+                # snapshot from an older app (no calendar data yet): show what it does have on the calendar until they update
+                prof["days"] = [{"d": w["date"], "t": w.get("title") or "Workout", "m": w.get("minutes") or 0,
+                                 "v": w.get("volume") or 0, "s": w.get("sets") or 0}
+                                for w in prof["workouts"] if w.get("date")]
             return 200, {"ok": True, "user": user_json(u), "mine": u["id"] == uid, "posts": nposts,
-                         "profile": json.loads(row["data"]) if row else None, "updated": row["updated"] if row else None,
+                         "profile": prof, "updated": row["updated"] if row else None,
                          "photos": photos}
         if method == "POST" and path == "/api/me/code":
             con.execute("UPDATE users SET code=? WHERE id=?", (new_code(con), uid))
