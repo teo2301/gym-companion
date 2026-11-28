@@ -148,7 +148,7 @@ function shareFile(name, text) {
       'color:#eef0f3;font:16px/1.4 system-ui,-apple-system,sans-serif">' +
       '<b style="font-size:19px">Your file is ready</b><p style="color:#8d94a0;margin:6px 0 16px">' +
       name.replace(/[<>&"]/g, '') + ' \u00b7 choose <b>Save to Files</b> to keep it.</p>' +
-      '<button data-a="go" style="width:100%;padding:14px;border:0;border-radius:14px;background:#d7ff3e;' +
+      '<button data-a="go" style="width:100%;padding:14px;border:0;border-radius:14px;background:var(--volt);' +
       'color:#0c0e12;font:600 17px system-ui,-apple-system,sans-serif">Save\u2026</button>' +
       '<button data-a="x" style="width:100%;padding:12px;margin-top:6px;border:0;background:none;color:#8d94a0;' +
       'font:16px system-ui,-apple-system,sans-serif">Cancel</button></div>';

@@ -151,7 +151,7 @@ function styles() {
     '.pvm{display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:13.5px}.pvm span{width:84px;flex:none;color:var(--dim)}',
     '.pvm div{flex:1;height:8px;border-radius:6px;background:var(--card2);overflow:hidden}.pvm small{width:78px;flex:none;text-align:right;color:var(--dim);font-size:12px}',
     '.pvwd{color:var(--dim);font-size:12.5px;margin:10px 4px -4px}',
-    '.stog{display:flex;align-items:center;gap:10px;background:var(--card);border-radius:14px;padding:12px;margin-bottom:10px;font-size:15px}.stog input{width:22px;height:22px;accent-color:#d7ff3e}'
+    '.stog{display:flex;align-items:center;gap:10px;background:var(--card);border-radius:14px;padding:12px;margin-bottom:10px;font-size:15px}.stog input{width:22px;height:22px;accent-color:var(--volt)}'
   ].join('\n');
   document.head.appendChild(s);
 }

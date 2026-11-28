@@ -57,7 +57,7 @@ function updateReady() {
   var d = document.createElement('div');
   d.id = 'updPill';
   d.setAttribute('style', 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));' +
-    'z-index:85;display:flex;align-items:center;gap:4px;background:#d7ff3e;color:#0c0e12;border-radius:22px;' +
+    'z-index:85;display:flex;align-items:center;gap:4px;background:var(--volt);color:#0c0e12;border-radius:22px;' +
     'box-shadow:0 8px 24px rgba(0,0,0,.5);font:600 15px system-ui,-apple-system,sans-serif;white-space:nowrap');
   d.innerHTML = '<button data-a="go" style="border:0;background:none;color:inherit;font:inherit;padding:11px 4px 11px 18px">' +
     'New version ready \u00b7 <u>Update</u></button><button data-a="x" aria-label="Later" style="border:0;background:none;' +
@@ -88,7 +88,7 @@ function homeScreenTip() {
   d.innerHTML = '<b style="font-size:16px">Install Gym Companion</b><br>' +
     '<span style="color:#8d94a0">Tap <b style="color:#eef0f3">Share</b> then <b style="color:#eef0f3">Add to Home Screen</b>. ' +
     'It works offline and keeps your workouts safe (Safari tabs can clear data you haven\u2019t opened for a week).</span>' +
-    '<button style="display:block;margin:10px 0 0 auto;border:0;border-radius:12px;padding:8px 16px;background:#d7ff3e;' +
+    '<button style="display:block;margin:10px 0 0 auto;border:0;border-radius:12px;padding:8px 16px;background:var(--volt);' +
     'color:#0c0e12;font:600 15px system-ui,-apple-system,sans-serif">Got it</button>';
   d.querySelector('button').onclick = function () { lsSet('gymA2hsTip', '1'); if (d.parentNode) d.parentNode.removeChild(d); };
   anchor.parentNode.insertBefore(d, anchor.nextSibling);

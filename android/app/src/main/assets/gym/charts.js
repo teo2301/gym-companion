@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 var NS = 'http://www.w3.org/2000/svg';
-var C = {series: '#d7ff3e', pr: '#ffb020', grid: '#2a303a', axis: '#5d6470', text: '#8d94a0', surface: '#181c23'};
+var C = {get series() { return (getComputedStyle(document.documentElement).getPropertyValue('--volt').trim() || '#d7ff3e'); }, pr: '#ffb020', grid: '#2a303a', axis: '#5d6470', text: '#8d94a0', surface: '#181c23'};
 
 function el(tag, attrs, parent) {
   var n = document.createElementNS(NS, tag);

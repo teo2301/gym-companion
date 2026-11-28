@@ -90,7 +90,7 @@ function styles() {
     '.chbr.tap{cursor:pointer}.chbl{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.chbt{position:relative;height:12px;border-radius:6px;background:var(--card2);overflow:hidden}',
     '.chbband{position:absolute;top:0;bottom:0;background:rgba(238,240,243,.10);border-left:1px solid rgba(238,240,243,.25);border-right:1px solid rgba(238,240,243,.25)}',
-    '.chbf{position:absolute;left:0;top:2px;bottom:2px;border-radius:0 4px 4px 0;background:#d7ff3e}',
+    '.chbf{position:absolute;left:0;top:2px;bottom:2px;border-radius:0 4px 4px 0;background:var(--volt)}',
     '.chbv{font-size:12.5px;color:var(--dim);white-space:nowrap;text-align:right;min-width:44px}',
     '.chbkey{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:12px}.chbkey i{width:16px;height:10px;border-radius:3px;background:rgba(238,240,243,.10);border:1px solid rgba(238,240,243,.25)}',
     '.ctbl{max-height:320px;overflow:auto;margin-top:4px}.ctbl table{width:100%;border-collapse:collapse;font-size:13.5px}',
@@ -535,7 +535,7 @@ function splitAdvice(others) {
   return others.slice().sort(function (a, b) { return a.sets - b.sets; }).slice(0, 2).map(function (i) { return i.label; }).join(' and ') + ' could use more.';
 }
 /* one hue (volt) at falling strength on the card surface, so no colour has to be decoded: every segment is labelled */
-function splitColor(a) { return 'rgba(215,255,62,' + a + ')'; }
+function splitColor(a) { return 'rgba(var(--volt-rgb),' + a + ')'; }
 
 function bucketize(W, cut) {
   var first = cut !== '0000-00-00' ? cut : (W.length ? W[0].date : dstr(new Date()));

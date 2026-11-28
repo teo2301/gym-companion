@@ -3,6 +3,14 @@
 Every release updates this file first; the download page ("What's new", `tools/site/download.html`)
 and the GitHub release notes are written from it. Newest first. Dates are release dates.
 
+## 1.20 — 28 Nov 2026: themes and fully customisable colours
+
+- **Themes:** Volt (lime), Midnight (blue) and Ember (orange), in Settings.
+- **Your own colours:** pick the colour of buttons, text and icons, background and cards. Everything
+  follows them: calendar, charts, profile, the body map and the character's kit. Reset puts the theme back.
+- **Week number** in the header next to the date (ISO weeks, e.g. W48).
+- Your workouts, photos and settings are untouched by the update; colours are saved with your backups.
+
 ## 1.19 — 28 Nov 2026: calendars, richer friend profiles, photos you choose to share
 
 - **Training calendar** on every profile (yours and each friend's): a month grid with your gym days

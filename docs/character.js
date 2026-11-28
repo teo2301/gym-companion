@@ -4,7 +4,8 @@
    wristbands (Novice), headband (Intermediate), lifting belt (Advanced), gold belt + aura (Elite). */
 (function () {
   'use strict';
-  var HAIR = '#2a2320', VOLT = '#d7ff3e', INK = '#0c0e12';
+  function voltNow() { try { return getComputedStyle(document.documentElement).getPropertyValue('--volt').trim() || '#d7ff3e'; } catch (e) { return '#d7ff3e'; } }
+  var HAIR = '#2a2320', INK = '#0c0e12';
   // Skin tones: [base, shade (muscle lines), highlight (gradient top)]. 'beige' is the original look.
   var TONES = {
     porcelain: ['#f3d2bb', '#d6a689', '#fce6d7'],
@@ -53,7 +54,7 @@
     });
     o += '</g>';
     // shorts
-    o += '<path d="M' + f(100 - Wt - 2) + ',150 L' + f(100 + Wt + 2) + ',150 L' + f(100 + Wt + 6) + ',184 L104,184 L100,170 L96,184 L' + f(100 - Wt - 6) + ',184Z" fill="' + VOLT + '"/>';
+    o += '<path d="M' + f(100 - Wt - 2) + ',150 L' + f(100 + Wt + 2) + ',150 L' + f(100 + Wt + 6) + ',184 L104,184 L100,170 L96,184 L' + f(100 - Wt - 6) + ',184Z" fill="' + voltNow() + '"/>';
     o += '<path d="M100,154 L100,170" stroke="#9fc21c" stroke-width="1.5"/>';
 
     // arms (double biceps), behind the torso edge
@@ -67,7 +68,7 @@
       o += '<circle class="bic" cx="' + f(100 + s * (S + 11 + 3 * m)) + '" cy="' + f(88 - 2 * m) + '" r="' + f(bic) + '" fill="url(#skin)"/>';
       o += '<path d="M' + f(100 + s * (S + 5)) + ',' + f(91 + bic * 0.3) + ' q' + f(s * (bic + 3)) + ',' + f(bic * 0.35) + ' ' + f(s * (2 * bic + 4)) + ',0" stroke="' + SKIN_D + '" stroke-width="1.6" opacity="' + f(0.25 + 0.6 * m) + '"/>';
       o += '<circle cx="' + f(fx) + '" cy="' + fy + '" r="' + f(7 + 2 * m) + '" fill="' + SKIN + '"/>';
-      if (tier >= 1) o += '<path d="M' + f(fx - s * 0.5) + ',' + (fy + 9) + ' L' + f(fx - s * 0.2) + ',' + (fy + 15) + '" stroke="' + VOLT + '" stroke-width="' + f(fore + 2) + '" stroke-linecap="butt"/>';
+      if (tier >= 1) o += '<path d="M' + f(fx - s * 0.5) + ',' + (fy + 9) + ' L' + f(fx - s * 0.2) + ',' + (fy + 15) + '" stroke="' + voltNow() + '" stroke-width="' + f(fore + 2) + '" stroke-linecap="butt"/>';
       o += '</g>';
     });
     o += '</g>';
@@ -103,7 +104,7 @@
     o += '<g class="head">';
     o += '<circle cx="100" cy="48" r="19" fill="url(#skin)"/>';
     o += '<path d="M81,46 Q81,27 100,27 Q119,27 119,46 Q113,37 100,37 Q87,37 81,46Z" fill="' + HAIR + '"/>';
-    if (tier >= 2) o += '<path d="M81.5,42 Q100,35 118.5,42 L118.5,47 Q100,40 81.5,47Z" fill="' + VOLT + '"/>';
+    if (tier >= 2) o += '<path d="M81.5,42 Q100,35 118.5,42 L118.5,47 Q100,40 81.5,47Z" fill="' + voltNow() + '"/>';
     o += '<circle cx="93" cy="51" r="2.2" fill="' + INK + '"/><circle cx="107" cy="51" r="2.2" fill="' + INK + '"/>';
     o += '<path d="M94,58 Q100,' + f(62 + 2 * m) + ' 106,58" fill="none" stroke="' + INK + '" stroke-width="2" stroke-linecap="round"/>';
     o += '</g></svg>';
