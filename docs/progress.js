@@ -58,6 +58,9 @@ function styles() {
     '.pgsub{color:var(--dim);font-size:13px;margin:0 0 8px}',
     '.pgseg{display:flex;gap:4px;margin:6px 0 8px;flex-wrap:wrap}.pgseg button{height:30px;padding:0 11px;border-radius:9px;background:var(--card2);color:var(--dim);font-size:13px;font-weight:700}',
     '.pgseg button.on{background:var(--line);color:var(--text)}',
+    '.pgsplit{display:flex;height:34px;border-radius:10px;overflow:hidden;gap:2px;margin:8px 0 10px}.pgsplit span{display:flex;align-items:center;justify-content:center;min-width:0;overflow:hidden;white-space:nowrap;font-size:12.5px;font-weight:800;color:#0c0e12}',
+    '.pgsplit span.lo{color:var(--text)}.pgsleg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;font-size:13px}.pgsleg div{display:flex;align-items:center;gap:7px;min-width:0}',
+    '.pgsleg i{flex:none;width:11px;height:11px;border-radius:3px}.pgsleg b{flex:1}.pgsleg span{color:var(--dim);font-weight:700}',
     '.pggrp{margin-top:4px}.pggh{display:flex;align-items:baseline;gap:8px;margin:6px 2px -2px;font-size:13.5px}.pggh b{flex:1}.pggh span{color:var(--dim);font-size:12.5px;font-weight:700}.pggdef{display:block;color:var(--dim2);font-size:11.5px;margin-top:6px}',
     '.pgnote{color:var(--dim);font-size:13px;margin-top:6px}.pgnote b{color:var(--text)}',
     '.pgrow{display:flex;align-items:center;gap:10px;padding:10px 2px;border-top:1px solid var(--line);cursor:pointer}.pgrow:first-child{border-top:0}',
@@ -211,6 +214,7 @@ function render() {
   html += card('evo', 'Your evolution', 'Before / after photos — stored only on this device.');
   html += card('mus', 'Muscles trained', 'Average sets per week. Most people grow best with about 10–20 per muscle.');
   html += card('grp', 'Muscle-group trends', 'Sets per week for each group, all on the same scale.');
+  html += card('split', 'Training split', 'Share of your sets by muscle group in this period.');
   html += card('str', 'Strength by muscle', 'Your best lift for each muscle against bodyweight standards. Tap one for its chart.');
   html += card('bw', 'Bodyweight', null, '');
   html += '<div class="pgcard"><div class="pgch"><h3>Personal records</h3><span class="pgsub" style="margin:0">' + P.length + ' in this period</span></div><div id="pg_prs"></div></div>';
@@ -347,6 +351,23 @@ function render() {
   q('pgn_grp').innerHTML = (LW.length && G.avg[gTop[0][0]] ? 'Most: <b>' + gTop[0][1] + '</b> (' + G.avg[gTop[0][0]] + ' a week) · least: <b>' + gLow[1] + '</b> (' + G.avg[gLow[0]] + ').' : '') +
     '<small class="pggdef">Push = chest, front/side delts, triceps · Pull = back, lats, rear delts, biceps, traps, forearms · Legs = quads, hamstrings, glutes, calves, adductors · Core = abs, obliques, lower back.</small>';
 
+  /* training split: one segmented bar = share of the period's sets per group (same group sets as the trends) */
+  var SP = splitShares(LW);
+  tables.split = function (box) { Charts.table(box, ['Group', 'Sets', 'Share (%)'], SP.items.map(function (i) { return [i.label, i.sets, i.pct]; })); };
+  if (isTable('split')) tables.split(q('pg_split'));
+  else if (!SP.total) q('pg_split').innerHTML = '<p class="cempty">No sets in this period yet.</p>';
+  else q('pg_split').innerHTML = '<div class="pgsplit" role="img" aria-label="Training split: ' +
+      SP.items.map(function (i) { return i.label + ' ' + i.pct + '%'; }).join(', ') + '">' +
+      SP.items.filter(function (i) { return i.sets > 0; }).map(function (i) {
+        return '<span data-g="' + i.id + '" class="' + (i.shade < .5 ? 'lo' : '') + '" style="flex:' + i.sets + ' 1 0;background:' + splitColor(i.shade) + '">' +
+          (i.pct >= 16 ? i.label + ' ' + i.pct + '%' : i.pct >= 7 ? i.pct + '%' : '') + '</span>'; }).join('') + '</div>' +
+    '<div class="pgsleg">' + SP.items.map(function (i) {
+      return '<div><i style="background:' + splitColor(i.shade) + '"></i><b>' + i.label + '</b><span>' + i.pct + '% · ' + i.sets + '</span></div>'; }).join('') + '</div>';
+  var spTop = SP.items.slice().sort(function (a, b) { return b.sets - a.sets; })[0];
+  q('pgn_split').innerHTML = !SP.total ? '' : spTop.share > 45
+    ? '<b>' + spTop.label + ' dominates</b> at ' + spTop.pct + '% of your sets. ' + splitAdvice(SP.items.filter(function (i) { return i !== spTop; }))
+    : 'Balanced: no group is above 45% of your sets.';
+
   /* strength by muscle */
   var mus = (pr && pr.muscles) || {};
   var sItems = Object.keys(mus).map(function (m) {
@@ -462,6 +483,33 @@ function groupTrend(weeks) {
   list.forEach(function (b) { GROUPS.forEach(function (g) { b[g[0]] = r1(b[g[0]]); }); });
   return {list: list, avg: avg, monthly: monthly};
 }
+
+/* Training split: total group sets over the period's weeks -> {total, items:[{id, label, sets, share, pct, shade}]}.
+ * pct are whole numbers that add up to 100 (largest remainder); shade ranks the groups (biggest = full volt). */
+function splitShares(weeks) {
+  var tot = {}, total = 0;
+  GROUPS.forEach(function (g) { tot[g[0]] = 0; });
+  weeks.forEach(function (w) { var gs = w.groups || {}; GROUPS.forEach(function (g) { tot[g[0]] += +gs[g[0]] || 0; }); });
+  GROUPS.forEach(function (g) { total += tot[g[0]]; });
+  var items = GROUPS.map(function (g) {
+    var share = total ? 100 * tot[g[0]] / total : 0;
+    return {id: g[0], label: g[1], sets: Math.round(tot[g[0]] * 10) / 10, share: share, pct: Math.floor(share)};
+  });
+  if (total) {
+    var left = 100 - items.reduce(function (a, i) { return a + i.pct; }, 0);
+    items.slice().sort(function (a, b) { return (b.share - b.pct) - (a.share - a.pct); }).slice(0, left).forEach(function (i) { i.pct++; });
+  }
+  items.slice().sort(function (a, b) { return b.sets - a.sets; }).forEach(function (i, r) { i.shade = [1, .72, .46, .28][r]; });
+  return {total: total, items: items};
+}
+/* what to add when one group dominates: untrained groups first, else the two smallest */
+function splitAdvice(others) {
+  var none = others.filter(function (i) { return !i.sets; }).map(function (i) { return i.label; });
+  if (none.length) return 'Not trained: ' + none.join(', ') + '.';
+  return others.slice().sort(function (a, b) { return a.sets - b.sets; }).slice(0, 2).map(function (i) { return i.label; }).join(' and ') + ' could use more.';
+}
+/* one hue (volt) at falling strength on the card surface, so no colour has to be decoded: every segment is labelled */
+function splitColor(a) { return 'rgba(215,255,62,' + a + ')'; }
 
 function bucketize(W, cut) {
   var first = cut !== '0000-00-00' ? cut : (W.length ? W[0].date : dstr(new Date()));
@@ -614,6 +662,6 @@ window.GymBack = function () {
 };
 
 styles();          // the home-screen button uses these styles too
-window.Progress = {open: open, exercise: exerciseSheet, _projection: projection, _standards: standardsFor,
+window.Progress = {open: open, exercise: exerciseSheet, _projection: projection, _standards: standardsFor, _split: splitShares,
   refreshEvolution: function () { if (D) drawEvolution(); }};
 })();

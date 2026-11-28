@@ -17,7 +17,7 @@ Goal: the best free progress tracking of any gym app. Each item ships on its own
       small single-series charts sharing one y-scale (no multi-colour lines), within the period.
 - [x] **Workout quality.** Per-workout duration and density (kg per minute) trends, plus a "best
       workouts" table (highest volume, most sets, longest) within the period.
-- [ ] **Training split.** A segmented bar of the share of sets by muscle group in the period (a
+- [x] **Training split.** A segmented bar of the share of sets by muscle group in the period (a
       figure, labelled with %), and a short note when one group dominates (>45%).
 - [ ] **Share a chart to Friends.** From any exercise detail or the Progress tiles: "Share" renders a
       card image (canvas, same chart + headline numbers) and opens the Friends post sheet with it as the

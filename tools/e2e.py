@@ -431,6 +431,34 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
         problems.append(f"best workouts (volume) not sorted: {vols}")
     page.locator("#pg_best").evaluate("n => n.closest('.pgcard').scrollIntoView({block:'start'})"); page.wait_for_timeout(200)
     page.screenshot(path=SHOTS / f"{tag}-12b-best.png")
+
+    # ---- Training split: one segmented bar of set shares per group (labelled %, adds to 100), the
+    # legend, a Table view, and the dominance note (the five bench-press sessions make Push > 45%).
+    segs = page.evaluate("Array.from(document.querySelectorAll('#pg_split .pgsplit span')).map(function (s) {"
+                         " return {g: s.getAttribute('data-g'), t: s.textContent, w: s.getBoundingClientRect().width}; })")
+    leg = page.locator("#pg_split .pgsleg div").all_inner_texts()
+    pcts = [int(x.split("%")[0].split()[-1]) for x in leg]
+    if len(leg) != 4 or [x.split()[0] for x in leg] != ["Push", "Pull", "Legs", "Core"] or sum(pcts) != 100:
+        problems.append(f"training split legend wrong: {leg}")
+    elif not segs or segs[0]["g"] != "push" or "%" not in segs[0]["t"] or max(s["w"] for s in segs) != segs[0]["w"] \
+            or str(pcts[0]) + "%" not in segs[0]["t"]:
+        problems.append(f"training split bar wrong: {segs} {leg}")
+    sn = page.inner_text("#pgn_split")
+    if pcts and pcts[0] > 45 and ("Push dominates" not in sn or f"{pcts[0]}%" not in sn):
+        problems.append(f"training split should note Push dominating: {sn!r} {leg}")
+    # mixed split (pure function): whole-number shares add to 100, shades follow the ranking
+    mix = page.evaluate("Progress._split([{groups: {push: 5, pull: 3, legs: 2, core: 1}}, {groups: {push: 1, pull: 0, legs: 0, core: 0}}])")
+    if [i["pct"] for i in mix["items"]] != [50, 25, 17, 8] or [i["shade"] for i in mix["items"]] != [1, 0.72, 0.46, 0.28] \
+            or page.evaluate("Progress._split([]).total") != 0:
+        problems.append(f"training split shares wrong: {mix}")
+    page.locator("#pg_split").evaluate("n => n.closest('.pgcard').scrollIntoView({block:'start'})"); page.wait_for_timeout(200)
+    page.screenshot(path=SHOTS / f"{tag}-12c-split.png")
+    page.click('[data-tab="split"]'); page.wait_for_selector("#pg_split table", timeout=3000)
+    srows = page.evaluate("Array.from(document.querySelectorAll('#pg_split tr')).slice(1).map(function (r) {"
+                          " return Array.from(r.cells).map(function (c) { return c.textContent; }); })")
+    if [r[0] for r in srows] != ["Push", "Pull", "Legs", "Core"] or sum(int(r[2]) for r in srows) != 100:
+        problems.append(f"training split table wrong: {srows}")
+    page.click('[data-tab="split"]')
     page.evaluate("GymBack()"); page.wait_for_timeout(300)
 
     print(f"{engine:9} {device:18} LV {lv} -> offline LV {lv_off}, workouts {len(sessions)}, "
