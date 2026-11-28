@@ -395,6 +395,44 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     page.evaluate("closeSheet()"); page.wait_for_timeout(300)
     page.evaluate("GymBack()"); page.wait_for_timeout(300)
 
+    # ---- Workout quality: duration + density per timed workout, Table view, best-workouts ranking.
+    # The five 60-min E2E Push sessions above are timed; the quick test workout (<10 min) is left out.
+    if page.evaluate("cur") == "prog":
+        page.evaluate("GymBack()"); page.wait_for_timeout(300)
+    page.locator("#openProg").scroll_into_view_if_needed(); page.click("#openProg")
+    page.wait_for_selector("#pg_train svg", timeout=10000)
+    page.click('#pgRange [data-r="3m"]'); page.wait_for_timeout(400)
+    if page.locator("#pgQual button.on").inner_text() != "Duration" or not page.locator("#pg_qual svg").count():
+        problems.append("workout quality should open on a Duration chart")
+    qn = page.inner_text("#pgn_qual")
+    if "kg/min" not in qn or "Average" not in qn:
+        problems.append(f"workout quality note wrong: {qn!r}")
+    page.click('#pgQual [data-q="density"]'); page.wait_for_timeout(200)
+    if not page.locator("#pg_qual svg").count():
+        problems.append("density chart missing")
+    page.locator("#pg_qual").scroll_into_view_if_needed(); page.wait_for_timeout(200)
+    page.locator("#pg_qual").evaluate("n => n.closest('.pgcard').scrollIntoView({block:'start'})"); page.wait_for_timeout(200)
+    page.screenshot(path=SHOTS / f"{tag}-12-quality.png")
+    page.click('[data-tab="qual"]'); page.wait_for_selector("#pg_qual table", timeout=3000)
+    qrows = page.evaluate("Array.from(document.querySelectorAll('#pg_qual tr')).slice(1).map(function (r) {"
+                          " return Array.from(r.cells).map(function (c) { return c.textContent; }); })")
+    push = [r for r in qrows if r[1] == "E2E Push"]
+    # newest first: 80 kg x 5 x 2 = 800 kg in 60 min -> 13 kg/min
+    if len(push) != 5 or push[0][2] != "60" or push[0][4] != "13" or any(int(r[2]) < 10 for r in qrows):
+        problems.append(f"workout quality table wrong: {qrows}")
+    page.click('[data-tab="qual"]')
+    page.click('#pgBest [data-b="minutes"]'); page.wait_for_timeout(200)
+    best = page.locator("#pg_best .pgrow").all_inner_texts()
+    if not best or "60" not in best[0] or "E2E Push" not in best[0] or len(best) > 5:
+        problems.append(f"best workouts (longest) wrong: {best}")
+    page.click('#pgBest [data-b="volume"]'); page.wait_for_timeout(200)
+    vols = page.evaluate("Array.from(document.querySelectorAll('#pg_best .pgrow .v')).map(function (v) { return v.firstChild.textContent; })")
+    if not vols or vols != sorted(vols, key=lambda v: float(v.rstrip('kM').replace(',', '')) * (1000 if v.endswith('k') else 1), reverse=True):
+        problems.append(f"best workouts (volume) not sorted: {vols}")
+    page.locator("#pg_best").evaluate("n => n.closest('.pgcard').scrollIntoView({block:'start'})"); page.wait_for_timeout(200)
+    page.screenshot(path=SHOTS / f"{tag}-12b-best.png")
+    page.evaluate("GymBack()"); page.wait_for_timeout(300)
+
     print(f"{engine:9} {device:18} LV {lv} -> offline LV {lv_off}, workouts {len(sessions)}, "
           f"{n_ex} exercises, tone {page.evaluate('Lifter.tone()')}, problems {len(problems)}")
     browser.close()

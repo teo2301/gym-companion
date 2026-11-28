@@ -63,6 +63,7 @@ function styles() {
     '.pgrow{display:flex;align-items:center;gap:10px;padding:10px 2px;border-top:1px solid var(--line);cursor:pointer}.pgrow:first-child{border-top:0}',
     '.pgrow div{flex:1;min-width:0}.pgrow b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pgrow small{color:var(--dim);font-size:12.5px}',
     '.pgrow .v{flex:none;text-align:right;font-weight:800;font-size:15px}.pgrow .v small{display:block;font-weight:600}',
+    '.pgbest{cursor:default}.pgrank{flex:none;width:30px;height:30px;border-radius:9px;background:var(--card2);color:var(--dim);font-weight:800;font-size:14px;display:flex;align-items:center;justify-content:center}',
     '.pgtro{flex:none;width:30px;height:30px;border-radius:9px;background:rgba(255,176,32,.14);display:flex;align-items:center;justify-content:center}',
     '.pgmore{width:100%;height:40px;border-radius:12px;background:var(--card2);color:var(--text);font-weight:700;margin-top:8px}',
     '.pgbw{display:flex;gap:8px;margin-top:10px}.pgbw input{flex:1;margin:0;height:42px}.pgbw button{flex:none;height:42px;padding:0 16px;border-radius:12px;background:var(--volt);color:#0c0e12;font-weight:700}',
@@ -199,6 +200,12 @@ function render() {
   html += card('train', 'Training per week', null, '<div class="pgseg" id="pgMetric">' +
     [['volume', 'Volume'], ['sets', 'Sets'], ['workouts', 'Workouts'], ['minutes', 'Time']].map(function (m) {
       return '<button data-m="' + m[0] + '" class="' + (m[0] === metric ? 'on' : '') + '">' + m[1] + '</button>'; }).join('') + '</div>');
+  html += card('qual', 'Workout quality', 'Each workout: how long it took and its density (kg lifted per minute).', '<div class="pgseg" id="pgQual">' +
+    [['minutes', 'Duration'], ['density', 'Density']].map(function (m) {
+      return '<button data-q="' + m[0] + '" class="' + (m[0] === qMetric ? 'on' : '') + '">' + m[1] + '</button>'; }).join('') + '</div>');
+  html += '<div class="pgcard"><div class="pgch"><h3>Best workouts</h3><span class="pgsub" style="margin:0">in this period</span></div>' +
+    '<div class="pgseg" id="pgBest">' + BEST.map(function (b) { return '<button data-b="' + b[0] + '" class="' + (b[0] === bestBy ? 'on' : '') + '">' + b[1] + '</button>'; }).join('') +
+    '</div><div id="pg_best"></div></div>';
   html += card('cal', 'Consistency', 'Each square is a day; brighter = more sets.');
   html += card('lvl', 'Lifter level', 'Your overall strength level (1–50), week by week.');
   html += card('evo', 'Your evolution', 'Before / after photos — stored only on this device.');
@@ -235,6 +242,48 @@ function render() {
     metric = m; lsSet('gymProgMetric', m); buzz();
     Array.prototype.forEach.call(this.children, function (b) { b.classList.toggle('on', b.getAttribute('data-m') === m); });
     drawTrain();
+  };
+
+  /* workout quality: duration + density per workout (timed workouts only), one series at a time */
+  var QW = qualityRows(W);
+  function drawQual() {
+    var dens = qMetric === 'density';
+    tables.qual = function (box) { Charts.table(box, ['Date', 'Workout', 'Time (min)', 'Volume (kg)', 'kg / min'],
+      QW.slice().reverse().map(function (w) { return [w.date, w.title, w.minutes, w.volume.toLocaleString(), w.density]; })); };
+    if (isTable('qual')) tables.qual(q('pg_qual'));
+    else Charts.line(q('pg_qual'), {points: QW.map(function (w) {
+      return {x: new Date(w.date + 'T12:00:00').getTime(), y: dens ? w.density : w.minutes, label: w.title + ' · ' + niceDate(w.date)}; }),
+      unit: dens ? ' kg/min' : ' min', yFmt: function (v) { return String(Math.round(v * 10) / 10); },
+      emptyText: 'Needs two timed workouts in this period.'});
+    var n = QW.length, avgM = n ? Math.round(QW.reduce(function (a, w) { return a + w.minutes; }, 0) / n) : 0;
+    var tv = QW.reduce(function (a, w) { return a + w.volume; }, 0), tm = QW.reduce(function (a, w) { return a + w.minutes; }, 0);
+    var trend = qualTrend(QW, dens ? 'density' : 'minutes');
+    q('pgn_qual').innerHTML = n ? 'Average <b>' + avgM + ' min</b> and <b>' + (tm ? Math.round(tv / tm) : 0) + ' kg/min</b> per workout' +
+      (trend ? ' · ' + (dens ? 'density ' : 'length ') + trend : '') + '.' +
+      (W.length > n ? ' <span style="color:var(--dim2)">' + (W.length - n) + ' untimed (under 10 min) left out.</span>' : '') : '';
+  }
+  drawQual();
+  q('pgQual').onclick = function (ev) {
+    var m = ev.target.getAttribute && ev.target.getAttribute('data-q'); if (!m) return;
+    qMetric = m; lsSet('gymProgQual', m); buzz();
+    Array.prototype.forEach.call(this.children, function (b) { b.classList.toggle('on', b.getAttribute('data-q') === m); });
+    drawQual();
+  };
+  /* best workouts: top 5 by volume / sets / length within the period */
+  function drawBest() {
+    var key = bestBy, unit = BEST.filter(function (b) { return b[0] === key; })[0][2];
+    var list = W.filter(function (w) { return w[key] > 0; }).slice().sort(function (a, b) { return b[key] - a[key] || (a.date < b.date ? 1 : -1); }).slice(0, 5);
+    q('pg_best').innerHTML = list.length ? list.map(function (w, i) {
+      return '<div class="pgrow pgbest"><span class="pgrank">' + (i + 1) + '</span><div><b>' + e(w.title) + '</b><small>' + e(niceDate(w.date)) + ' · ' +
+        w.sets + ' sets · ' + (w.minutes ? w.minutes + ' min' : 'untimed') + '</small></div><span class="v">' + (key === 'volume' ? w.volume.toLocaleString() : w[key]) + '<small>' + unit + '</small></span></div>';
+    }).join('') : '<p class="cempty">No workouts in this period yet.</p>';
+  }
+  drawBest();
+  q('pgBest').onclick = function (ev) {
+    var b = ev.target.getAttribute && ev.target.getAttribute('data-b'); if (!b) return;
+    bestBy = b; lsSet('gymProgBest', b); buzz();
+    Array.prototype.forEach.call(this.children, function (x) { x.classList.toggle('on', x.getAttribute('data-b') === b); });
+    drawBest();
   };
 
   /* consistency calendar (always the last 26 weeks, or the range if shorter) */
@@ -360,6 +409,25 @@ function render() {
     var id = b.getAttribute('data-tab'); b.classList.toggle('on', isTable(id)); b.textContent = isTable(id) ? 'Chart' : 'Table';
     b.onclick = function () { tableOn[id] = !tableOn[id]; buzz(); render(); };
   });
+}
+var qMetric = lsGet('gymProgQual') === 'density' ? 'density' : 'minutes';
+var BEST = [['volume', 'Volume', 'kg'], ['sets', 'Sets', 'sets'], ['minutes', 'Longest', 'min']];
+var bestBy = BEST.some(function (b) { return b[0] === lsGet('gymProgBest'); }) ? lsGet('gymProgBest') : 'volume';
+/* Workouts with a real duration (>= 10 min; a timer left off or a quick log would make density meaningless),
+ * each with density = volume per minute. */
+function qualityRows(W) {
+  return W.filter(function (w) { return (w.minutes || 0) >= 10; }).map(function (w) {
+    return {date: w.date, title: w.title, minutes: w.minutes, volume: w.volume, sets: w.sets, density: Math.round(w.volume / w.minutes)};
+  });
+}
+/* "▲ 8%" / "▼ 5%" / "steady": the later half of the period vs the earlier half (needs 4+ workouts). */
+function qualTrend(L, k) {
+  if (L.length < 4) return '';
+  var h = Math.floor(L.length / 2), avg = function (a) { return a.reduce(function (s, w) { return s + w[k]; }, 0) / a.length; };
+  var a = avg(L.slice(0, h)), b = avg(L.slice(L.length - h));
+  if (!a) return '';
+  var p = Math.round(100 * (b - a) / a);
+  return p > 0 ? '▲ ' + p + '% recently' : p < 0 ? '▼ ' + (-p) + '% recently' : 'steady';
 }
 var tableOn = {};
 function isTable(id) { return !!tableOn[id]; }
