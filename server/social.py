@@ -28,6 +28,12 @@ Endpoints (all JSON unless noted; prefix /gs is accepted and stripped):
   PUT    /api/posts/<id>/photo      raw image body        -> {post}
   DELETE /api/posts/<id>                                  -> {ok}
   GET    /api/feed?before=<ms>                            -> {posts:[...]}
+  PUT    /api/me/profile            snapshot              -> {ok}   (whitelisted; {shared:false} = name + level only)
+  GET    /api/users/<id>                                  -> {user, profile, photos}   (friends + self only)
+  GET    /api/me/photos                                   -> {photos:[...]}   (my public photos)
+  PUT    /api/me/photos?kind=&date=&lv=  raw image body   -> {photo}   (make one photo public: friends-only)
+  DELETE /api/me/photos/<id>                              -> {ok}   (back to private: deleted from the server)
+  POST   /api/me/photos/keep        {ids:[...]}           -> {ok, removed}   (drop public copies the phone no longer has)
   POST   /api/posts/<id>/like                             -> {liked, likes}   (toggle)
   GET    /api/posts/<id>/comments                         -> {comments:[...]}
   POST   /api/posts/<id>/comments   {text}                -> {comment}
@@ -65,7 +71,7 @@ ORIGINS = set(filter(None, os.environ.get("ORIGINS", ",".join([
 ])).split(",")))
 
 MAX_JSON = 16 * 1024
-MAX_PROFILE_JSON = 64 * 1024
+MAX_PROFILE_JSON = 1024 * 1024        # stats snapshot incl. the whole dated workout list (a few hundred KB at most)
 MAX_SYNC_JSON = 6 * 1024 * 1024          # owner-only workout sync (whole history, a few hundred KB in practice)
 OWNER_UPSTREAM = os.environ.get("OWNER_UPSTREAM", "").rstrip("/")   # the owner's private gym server (proxied for the owner only)
 OWNER_SRV = {"plan", "progress", "live", "op", "history", "workouts", "stats", "workout", "note", "routine", "custom", "backup"}
@@ -75,6 +81,8 @@ PHOTO_PX, AVATAR_PX = 1600, 256
 MEDIA_TTL = 6 * 3600                 # signed media links last 6 h (feeds are refetched often)
 MEDIA_CAP = 5 * 1024 ** 3            # refuse new photos past 5 GB total (protects the disk)
 MAX_POSTS_PER_USER = 2000
+MAX_PHOTOS_PER_USER = 200            # public progress / character photos
+PROFILE_PHOTO_PX = 1280
 FEED_PAGE = 20
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"    # no 0/O, 1/I/L
 
@@ -124,6 +132,10 @@ def init_db():
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       data TEXT NOT NULL, updated INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+    CREATE TABLE IF NOT EXISTS photos (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL, date TEXT NOT NULL, lv INTEGER NOT NULL DEFAULT 0, file TEXT NOT NULL, created INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS photos_by_user ON photos(user_id, date);
     """)
     try:
         con.execute("ALTER TABLE users ADD COLUMN recovery_hash TEXT")   # recovery key (hashed), see /api/recover
@@ -235,14 +247,42 @@ def clean_workout(w):
             "lifts": lifts, "prs": [clean_text(p, 80) for p in (w.get("prs") or [])[:8] if p]}
 
 
+def _num(v, lo, hi, nd=None):
+    if not isinstance(v, (int, float)) or isinstance(v, bool) or v != v:
+        return 0
+    v = max(lo, min(hi, float(v)))
+    return int(v) if nd is None else round(v, nd)
+
+
+def _date(s):
+    s = str(s or "")
+    return s if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) else ""
+
+
+def _key(s):
+    s = str(s or "")
+    return s if re.fullmatch(r"[a-z_]{1,24}", s) else ""
+
+
+def _opt(v, lo, hi, nd=1):
+    return None if v is None else _num(v, lo, hi, nd)
+
+
 def clean_profile(b):
-    """Whitelist the profile snapshot (level, muscle levels, headline stats, recent workouts) friends can view."""
-    num = lambda v, lo, hi: max(lo, min(hi, float(v))) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+    """Whitelist the stats snapshot friends can view: level, muscle levels, headline stats, recent workout cards,
+    and (v1.19) the dated workout list for the calendar + the numbers behind every Progress card. Everything is
+    re-built field by field from known keys with clamped numbers and short cleaned strings; nothing else survives.
+    {shared: false} (the "Share my stats" switch is off) keeps only the name (on the account) and the level."""
+    b = b if isinstance(b, dict) else {}
+    base = {"lv": _num(b.get("lv"), 0, 50), "tier": clean_text(b.get("tier"), 20),
+            "score": _num(b.get("score"), -1, 5, 3), "xp": _num(b.get("xp"), 0, 1, 3)}
+    if b.get("shared") is False:
+        return dict(base, shared=False)
     muscles = []
     for m in (b.get("muscles") or [])[:30]:
         if isinstance(m, dict) and m.get("name"):
             muscles.append({"name": clean_text(m["name"], 30), "level": clean_text(m.get("level"), 20),
-                            "score": round(num(m.get("score"), -1, 5), 2), "lift": clean_text(m.get("lift"), 60)})
+                            "score": _num(m.get("score"), -1, 5, 2), "lift": clean_text(m.get("lift"), 60)})
     st = b.get("stats") if isinstance(b.get("stats"), dict) else {}
     workouts = []
     for w in (b.get("workouts") or [])[:20]:
@@ -250,13 +290,73 @@ def clean_profile(b):
         if cw:
             cw["lifts"] = cw["lifts"][:6]
             workouts.append(cw)
-    return {"lv": int(num(b.get("lv"), 0, 50)), "tier": clean_text(b.get("tier"), 20),
-            "score": round(num(b.get("score"), -1, 5), 3), "xp": round(num(b.get("xp"), 0, 1), 3),
-            "muscles": muscles,
-            "stats": {"workouts": int(num(st.get("workouts"), 0, 100000)), "volume": int(num(st.get("volume"), 0, 1e9)),
-                      "streak_weeks": int(num(st.get("streak_weeks"), 0, 1000)), "avg_week": round(num(st.get("avg_week"), 0, 50), 1),
-                      "since": clean_text(st.get("since"), 10)},
-            "workouts": workouts}
+    days = []                                   # calendar: every workout, compact (date, title, min, kg, sets)
+    for d in (b.get("days") or [])[:3000]:
+        if isinstance(d, dict) and _date(d.get("d")):
+            days.append({"d": _date(d["d"]), "t": clean_text(d.get("t"), 60) or "Workout", "m": _num(d.get("m"), 0, 1000),
+                         "v": _num(d.get("v"), 0, 10_000_000), "s": _num(d.get("s"), 0, 2000)})
+    wk = b.get("week") if isinstance(b.get("week"), dict) else None
+    week = None
+    if wk:
+        week = {"workouts": _num(wk.get("workouts"), 0, 100), "streak_weeks": _num(wk.get("streak_weeks"), 0, 1000),
+                "best_week": _num(wk.get("best_week"), 0, 100), "avg_workouts_4w": _opt(wk.get("avg_workouts_4w"), 0, 50),
+                "avg_workouts_12w": _opt(wk.get("avg_workouts_12w"), 0, 50), "avg_sets_4w": _opt(wk.get("avg_sets_4w"), 0, 2000),
+                "weeks": [{"week": _date(x.get("week")), "workouts": _num(x.get("workouts"), 0, 100)}
+                          for x in (wk.get("weeks") or [])[:60] if isinstance(x, dict)]}
+    out = dict(base, shared=True, muscles=muscles, workouts=workouts, days=days, week=week,
+               stats={"workouts": _num(st.get("workouts"), 0, 100000), "volume": _num(st.get("volume"), 0, 1e9),
+                      "streak_weeks": _num(st.get("streak_weeks"), 0, 1000), "avg_week": _num(st.get("avg_week"), 0, 50, 1),
+                      "since": clean_text(st.get("since"), 10)})
+    out["progress"] = clean_progress(b.get("progress"))
+    return out
+
+
+def clean_progress(p):
+    """The numbers the Progress cards are drawn from (GymCore.stats + GymCore.progress), read-only for friends.
+    Bodyweight is deliberately NOT accepted: it isn't shared."""
+    if not isinstance(p, dict):
+        return None
+    st = p.get("stats") if isinstance(p.get("stats"), dict) else {}
+    pr = p.get("prog") if isinstance(p.get("prog"), dict) else {}
+    wos = [{"date": _date(w.get("date")), "title": clean_text(w.get("title"), 60) or "Workout", "minutes": _num(w.get("minutes"), 0, 1000),
+            "sets": _num(w.get("sets"), 0, 2000), "reps": _num(w.get("reps"), 0, 100000), "volume": _num(w.get("volume"), 0, 10_000_000)}
+           for w in (st.get("workouts") or [])[-3000:] if isinstance(w, dict) and _date(w.get("date"))]
+    exs = []
+    for x in (st.get("exercises") or [])[:200]:
+        if isinstance(x, dict) and x.get("name"):
+            exs.append({"name": clean_text(x["name"], 80), "sessions": _num(x.get("sessions"), 0, 100000),
+                        "first_date": _date(x.get("first_date")), "last_date": _date(x.get("last_date")),
+                        "best_e1rm": _num(x.get("best_e1rm"), 0, 2000, 1), "best_e1rm_date": _date(x.get("best_e1rm_date")),
+                        "heaviest": _num(x.get("heaviest"), 0, 2000, 2), "heaviest_date": _date(x.get("heaviest_date")),
+                        "best_volume": _num(x.get("best_volume"), 0, 10_000_000), "total_reps": _num(x.get("total_reps"), 0, 10_000_000),
+                        "total_volume": _num(x.get("total_volume"), 0, 1e10)})
+    prs = [{"date": _date(x.get("date")), "ex": clean_text(x.get("ex"), 80), "kind": "weight" if x.get("kind") == "weight" else "e1rm",
+            "w": _num(x.get("w"), 0, 2000, 2), "r": _num(x.get("r"), 0, 1000), "e1rm": _num(x.get("e1rm"), 0, 2000, 1)}
+           for x in (st.get("prs") or [])[-500:] if isinstance(x, dict) and _date(x.get("date")) and x.get("ex")]
+    weeks = []
+    for w in (pr.get("weeks") or [])[-520:]:
+        if not (isinstance(w, dict) and _date(w.get("week"))):
+            continue
+        sets = {}
+        for k, v in list((w.get("sets") or {}).items())[:30] if isinstance(w.get("sets"), dict) else []:
+            if _key(k):
+                sets[k] = _num(v, 0, 500, 1)
+        g = w.get("groups") if isinstance(w.get("groups"), dict) else {}
+        weeks.append({"week": _date(w["week"]), "lv": _num(w.get("lv"), 0, 50), "score": _num(w.get("score"), -1, 5, 3), "sets": sets,
+                      "groups": {k: _num(g.get(k), 0, 1000, 1) for k in ("push", "pull", "legs", "core")}})
+    mus = {}
+    for k, x in list((pr.get("muscles") or {}).items())[:30] if isinstance(pr.get("muscles"), dict) else []:
+        if _key(k) and isinstance(x, dict):
+            mus[k] = {"level": clean_text(x.get("level"), 20), "level_index": _num(x.get("level_index"), -1, 4),
+                      "score": _num(x.get("score"), -1, 5, 3), "e1rm": _num(x.get("e1rm"), 0, 2000, 1), "lift": clean_text(x.get("lift"), 80)}
+    ov = pr.get("overall") if isinstance(pr.get("overall"), dict) else {}
+    return {"stats": {"workouts": wos, "exercises": exs, "prs": prs},
+            "prog": {"overall": {"lv": _num(ov.get("lv"), 0, 50), "tier": clean_text(ov.get("tier"), 20), "score": _num(ov.get("score"), -1, 5, 3)},
+                     "weeks": weeks, "muscles": mus, "strongest": _key(pr.get("strongest")) or None, "weakest": _key(pr.get("weakest")) or None}}
+
+
+def photo_json(r):
+    return {"id": r["id"], "kind": r["kind"], "date": r["date"], "lv": r["lv"], "url": media_url(r["file"])}
 
 
 def limited(key, kind):
@@ -517,6 +617,7 @@ class Handler(BaseHTTPRequestHandler):
                 return 200, {"ok": True, "me": reload_me()}
             if method == "DELETE":
                 files = [r[0] for r in con.execute("SELECT photo FROM posts WHERE user_id=?", (uid,))] + [me["avatar"]]
+                files += [r[0] for r in con.execute("SELECT file FROM photos WHERE user_id=?", (uid,))]
                 con.execute("DELETE FROM users WHERE id=?", (uid,))           # cascades to everything
                 for f in files:
                     drop_media(f)
@@ -538,7 +639,8 @@ class Handler(BaseHTTPRequestHandler):
             if method == "PUT":
                 body = self._json(MAX_SYNC_JSON)
                 sess = [x for x in (body.get("sessions") or []) if isinstance(x, dict)][:5000]
-                tmp = f.with_suffix(".tmp"); tmp.write_text(json.dumps({"updated": now_ms(), "sessions": sess})); tmp.replace(f)
+                gone = [int(x) for x in (body.get("deleted") or []) if isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0][:5000]
+                tmp = f.with_suffix(".tmp"); tmp.write_text(json.dumps({"updated": now_ms(), "sessions": sess, "deleted": gone})); tmp.replace(f)
                 return 200, {"ok": True, "count": len(sess)}
             if method == "GET":
                 return 200, {"ok": True, "sessions": json.loads(f.read_text())["sessions"] if f.exists() else []}
@@ -546,9 +648,46 @@ class Handler(BaseHTTPRequestHandler):
             raw = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(20))
             con.execute("UPDATE users SET recovery_hash=? WHERE id=?", (hashlib.sha256(raw.encode()).hexdigest(), uid))
             return 200, {"ok": True, "key": "-".join(raw[i:i + 5] for i in range(0, 20, 5))}
+        if path == "/api/me/photos" and method == "GET":
+            rows = con.execute("SELECT * FROM photos WHERE user_id=? ORDER BY date DESC, created DESC", (uid,))
+            return 200, {"ok": True, "photos": [photo_json(r) for r in rows]}
+        if path == "/api/me/photos" and method == "PUT":
+            kind = "character" if (qs.get("kind") or [""])[0] == "character" else "progress"
+            date = _date((qs.get("date") or [""])[0]) or time.strftime("%Y-%m-%d")
+            try:
+                lv = max(0, min(50, int((qs.get("lv") or ["0"])[0])))
+            except ValueError:
+                lv = 0
+            if con.execute("SELECT COUNT(*) FROM photos WHERE user_id=?", (uid,)).fetchone()[0] >= MAX_PHOTOS_PER_USER:
+                raise ApiError(400, "too many public photos; make some private first")
+            if media_bytes_used() > MEDIA_CAP:
+                raise ApiError(507, "photo storage is full")
+            try:
+                name = save_image(self._body(MAX_IMAGE), PROFILE_PHOTO_PX)     # re-encoded: EXIF/GPS gone
+            except ValueError as e:
+                raise ApiError(400, str(e))
+            pid = secrets.token_hex(8)
+            con.execute("INSERT INTO photos VALUES (?,?,?,?,?,?,?)", (pid, uid, kind, date, lv, name, now_ms()))
+            return 200, {"ok": True, "photo": photo_json(con.execute("SELECT * FROM photos WHERE id=?", (pid,)).fetchone())}
+        m = re.fullmatch(r"/api/me/photos/([0-9a-f]{16})", path)
+        if m and method == "DELETE":
+            r = con.execute("SELECT * FROM photos WHERE id=? AND user_id=?", (m.group(1), uid)).fetchone()
+            if r:
+                con.execute("DELETE FROM photos WHERE id=?", (r["id"],))
+                drop_media(r["file"])
+            return 200, {"ok": True, "deleted": bool(r)}
+        if path == "/api/me/photos/keep" and method == "POST":
+            keep = {str(x) for x in (self._json().get("ids") or [])[:MAX_PHOTOS_PER_USER] if isinstance(x, str)}
+            gone = [r for r in con.execute("SELECT * FROM photos WHERE user_id=?", (uid,)) if r["id"] not in keep]
+            for r in gone:
+                con.execute("DELETE FROM photos WHERE id=?", (r["id"],))
+                drop_media(r["file"])
+            return 200, {"ok": True, "removed": len(gone)}
         if path == "/api/me/profile":
             if method == "PUT":
                 prof = clean_profile(self._json(MAX_PROFILE_JSON))
+                if len(json.dumps(prof)) > MAX_PROFILE_JSON:
+                    raise ApiError(413, "snapshot too large")
                 con.execute("INSERT INTO profiles VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data, updated=excluded.updated",
                             (uid, json.dumps(prof), now_ms()))
                 return 200, {"ok": True}
@@ -562,8 +701,10 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(404, "profile not found")
             row = con.execute("SELECT data, updated FROM profiles WHERE user_id=?", (u["id"],)).fetchone()
             nposts = con.execute("SELECT COUNT(*) FROM posts WHERE user_id=?", (u["id"],)).fetchone()[0]
+            photos = [photo_json(r) for r in con.execute("SELECT * FROM photos WHERE user_id=? ORDER BY date DESC, created DESC", (u["id"],))]
             return 200, {"ok": True, "user": user_json(u), "mine": u["id"] == uid, "posts": nposts,
-                         "profile": json.loads(row["data"]) if row else None, "updated": row["updated"] if row else None}
+                         "profile": json.loads(row["data"]) if row else None, "updated": row["updated"] if row else None,
+                         "photos": photos}
         if method == "POST" and path == "/api/me/code":
             con.execute("UPDATE users SET code=? WHERE id=?", (new_code(con), uid))
             return 200, {"ok": True, "me": reload_me()}

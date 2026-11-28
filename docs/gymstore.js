@@ -6,12 +6,13 @@
 'use strict';
 
 var DB_NAME = 'gym-companion';
-var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot', 'skinTone', 'socialToken', 'socialMe', 'bwLog'];
+var KEYS = ['bodyweight', 'lastLv', 'lastBackupAt', 'onboarded', 'seedBests', 'routines', 'notes', 'custom', 'snapshot', 'skinTone', 'socialToken', 'socialMe', 'bwLog', 'userName', 'namePrompted', 'deletedWorkouts'];
 var LS_KEYS = {
   bodyweight: 'gymBodyweight', lastLv: 'gymLv', lastBackupAt: 'gymLastBackupAt',
   onboarded: 'gymOnboarded', seedBests: 'gymSeedBests', routines: 'gymRoutines',
   notes: 'gymNotes', custom: 'gymCustom', snapshot: 'gymSnapshot', lastBackupNudge: 'gymBackupNudge',
-  skinTone: 'gymSkinTone', socialToken: 'gymSocialToken', socialMe: 'gymSocialMe', bwLog: 'gymBwLog'
+  skinTone: 'gymSkinTone', socialToken: 'gymSocialToken', socialMe: 'gymSocialMe', bwLog: 'gymBwLog',
+  userName: 'gymUserName', namePrompted: 'gymNamePrompted', deletedWorkouts: 'gymDeletedWorkouts'
 };
 var UPPER = ['chest', 'front_delts', 'side_delts', 'rear_delts', 'triceps', 'biceps', 'lats', 'upper_back', 'traps', 'forearms', 'abs', 'obliques'];
 var LOWER = ['quads', 'hamstrings', 'glutes', 'calves', 'adductors', 'lower_back'];
@@ -358,7 +359,7 @@ function makePublic(c) {
       ss.sort(function (a, b) { return (a.type === 'warmup' ? 0 : 1) - (b.type === 'warmup' ? 0 : 1); });
       if (ss.length) exs.push({name: name, sets: ss});   // routine exercises that were never done aren't part of it
     });
-    return {id: raw.id, source: 'device', editable: true, title: n.title, date_str: n.date_str, start: n.start,
+    return {id: raw.id, source: 'device', editable: true, title: n.title, note: raw.note || '', date_str: n.date_str, start: n.start,
       duration_min: n.duration_min, total_sets: sets, total_volume_kg: Math.round(vol), exercises: exs};
   }
   store.workouts = function () {
@@ -374,35 +375,71 @@ function makePublic(c) {
       return raw ? workoutJson(raw) : Promise.reject(new Error('workout not found'));
     });
   };
+  /* editor sets -> canonical session sets ({} if none survive) */
+  function editSets(edit) {
+    var ex = {};
+    asArray(edit && edit.exercises).forEach(function (e) {
+      var name = String((e && e.name) || '').trim().slice(0, 80); if (!name) return;
+      var sets = asArray(e.sets).map(function (x, i) {
+        if (x.type === 'cardio') {                    // keep cardio intervals (same bounds as the live op)
+          var c = core().cardioEntry(x, 0);
+          return {weight_kg: 0, reps: 0, set_type: 'normal', set_index: i, distance_km: c.km, duration_seconds: c.sec,
+            kmh: c.kmh, kcal: c.kcal, mode: c.mode, keep: c.sec > 0 || c.km > 0};
+        }
+        return {weight_kg: Math.max(0, Math.min(1000, num(x.w))), reps: Math.max(0, Math.min(1000, Math.round(num(x.r)))),
+          set_type: x.type === 'warmup' ? 'warmup' : 'normal', set_index: i, keep: Math.round(num(x.r)) > 0};
+      }).filter(function (x) { var k = x.keep; delete x.keep; return k; });
+      if (sets.length) ex[name] = (ex[name] || []).concat(sets);
+    });
+    return ex;
+  }
+  function cleanNote(t) { return String(t == null ? '' : t).replace(/\s+/g, ' ').trim().slice(0, 300); }
+  function minutesOf(v) { var m = Math.round(num(v, -1)); return m >= 0 && m <= 600 ? m : null; }
+  function saved() { return refreshCache(c).then(function () { return store.snapshot(); }); }
   store.saveWorkout = function (id, edit) {
     return sessionsAll().then(function (all) {
       var raw = asArray(all).filter(function (s) { return s && s.id === id; })[0];
       if (!raw) return {ok: false, error: 'workout not found'};
-      var n = core().normalizeSession(raw), ex = {}, any = false;
-      asArray(edit && edit.exercises).forEach(function (e) {
-        var name = String((e && e.name) || '').trim().slice(0, 80); if (!name) return;
-        var sets = asArray(e.sets).map(function (x, i) {
-          if (x.type === 'cardio') {                    // keep cardio intervals (same bounds as the live op)
-            var c = core().cardioEntry(x, 0);
-            return {weight_kg: 0, reps: 0, set_type: 'normal', set_index: i, distance_km: c.km, duration_seconds: c.sec,
-              kmh: c.kmh, kcal: c.kcal, mode: c.mode, keep: c.sec > 0 || c.km > 0};
-          }
-          return {weight_kg: Math.max(0, Math.min(1000, num(x.w))), reps: Math.max(0, Math.min(1000, Math.round(num(x.r)))),
-            set_type: x.type === 'warmup' ? 'warmup' : 'normal', set_index: i, keep: Math.round(num(x.r)) > 0};
-        }).filter(function (x) { var k = x.keep; delete x.keep; return k; });
-        if (sets.length) { ex[name] = (ex[name] || []).concat(sets); any = true; }
-      });
-      if (!any) return {ok: false, error: 'A workout needs at least one set \u2014 delete it instead'};
-      // canonical (Hevy-like) shape; same id, start and end, so history order and identity are kept
-      var saved = {id: raw.id, title: String((edit && edit.title) || n.title).trim().slice(0, 60) || n.title,
-        start: n.start, end: n.end, date_str: n.date_str, exercises: ex, savedAt: raw.savedAt || Date.now(), editedAt: Date.now()};
-      return sessionPut(saved).then(function () { return refreshCache(c); })
-        .then(function () { return store.snapshot(); }).then(function () { return {ok: true, id: raw.id}; });
+      var n = core().normalizeSession(raw), ex = editSets(edit);
+      if (!Object.keys(ex).length) return {ok: false, error: 'A workout needs at least one set \u2014 delete it instead'};
+      // canonical (Hevy-like) shape; same id and start, so history order and identity are kept
+      var mins = edit && has(edit, 'minutes') ? minutesOf(edit.minutes) : null;
+      var note = edit && has(edit, 'note') ? cleanNote(edit.note) : cleanNote(raw.note);
+      var saved1 = {id: raw.id, title: String((edit && edit.title) || n.title).trim().slice(0, 60) || n.title,
+        start: n.start, end: mins !== null ? n.start + mins * 60000 : n.end, date_str: n.date_str, exercises: ex,
+        savedAt: raw.savedAt || Date.now(), editedAt: Date.now()};
+      if (note) saved1.note = note;
+      if (raw.addedAt) saved1.addedAt = raw.addedAt;
+      return sessionPut(saved1).then(saved).then(function () { return {ok: true, id: raw.id}; });
     });
   };
+  /* A workout done on an earlier day (calendar "Add workout on <date>"). Never in the future. */
+  store.addWorkout = function (o) {
+    o = o || {};
+    var d = /^\d{4}-\d{2}-\d{2}$/.test(String(o.date)) ? String(o.date) : '';
+    if (!d) return Promise.resolve({ok: false, error: 'Pick a date'});
+    if (d > dateStrLocal(new Date())) return Promise.resolve({ok: false, error: 'You can\u2019t log a workout on a future date'});
+    var tm = /^(\d{1,2}):(\d{2})$/.exec(String(o.time || '18:00'));
+    if (!tm || +tm[1] > 23 || +tm[2] > 59) return Promise.resolve({ok: false, error: 'Pick a start time'});
+    var start = new Date(d + 'T00:00:00'); start.setHours(+tm[1], +tm[2], 0, 0);
+    if (start.getTime() > Date.now()) return Promise.resolve({ok: false, error: 'That start time hasn\u2019t happened yet'});
+    var ex = editSets(o);
+    if (!Object.keys(ex).length) return Promise.resolve({ok: false, error: 'Add at least one exercise with a set'});
+    var mins = minutesOf(o.minutes) || 0, now = Date.now();
+    var s = {id: uid(), title: String(o.title || '').trim().slice(0, 60) || 'Workout', start: start.getTime(),
+      end: start.getTime() + mins * 60000, date_str: d, exercises: ex, savedAt: now, addedAt: now};
+    var note = cleanNote(o.note); if (note) s.note = note;
+    return sessionPut(s).then(saved).then(function () { return {ok: true, id: s.id}; });
+  };
   store.deleteWorkout = function (id) {
-    return sessionDelete(id).then(function () { return refreshCache(c); })
-      .then(function () { return store.snapshot(); }).then(function () { return {ok: true}; });
+    return Promise.all([sessionsAll(), kvGet('deletedWorkouts')]).then(function (v) {
+      var raw = asArray(v[0]).filter(function (s) { return s && s.id === id; })[0];
+      var n = raw ? core().normalizeSession(raw) : null;
+      // remember the start time so the owner's server copy can be removed too (owner sync); ids aren't kept there
+      var gone = asArray(v[1]).filter(function (x) { return x > 0; });
+      if (n && n.start && gone.indexOf(n.start) < 0) gone.push(n.start);
+      return Promise.all([sessionDelete(id), kvSet('deletedWorkouts', gone.slice(-1000))]);
+    }).then(saved).then(function () { return {ok: true}; });
   };
   store.history = function (name) {
     return refreshCache(c).then(function () {
@@ -565,6 +602,8 @@ function makePublic(c) {
         next.skinTone = pick('skinTone', null);
         next.socialToken = pick('socialToken', null); next.socialMe = pick('socialMe', null);   // friends login
         next.bwLog = asArray(pick('bwLog', []));
+        next.userName = pick('userName', null);
+        next.deletedWorkouts = asArray(pick('deletedWorkouts', []));
         counts.sessionsAdded = next.sessions.length;
         // Clear strictly before writing, so the restored sessions can never be wiped by the clear.
         tasks.push(sessionsClear().then(function () {
@@ -601,6 +640,8 @@ function makePublic(c) {
         var tn = pick('skinTone', null); if (tn) next.skinTone = tn;
         var bwm = {}; asArray(v[8]).concat(asArray(pick('bwLog', []))).forEach(function (x) { if (x && x.date) bwm[x.date] = x; });
         next.bwLog = Object.keys(bwm).sort().map(function (d) { return bwm[d]; });   // merge weigh-ins by day
+        var un = pick('userName', null);                 // merge: keep your name unless this phone has none
+        if (un) tasks.push(kvGet('userName').then(function (cur) { if (!cur) return kvSet('userName', un); }));
         if (!v[7] && pick('socialToken', null)) { next.socialToken = pick('socialToken', null); next.socialMe = pick('socialMe', null); }   // merge: keep yours unless the backup has one
         added.forEach(function (s) { tasks.push(sessionPut(s)); });
       }
@@ -662,7 +703,15 @@ function makePrivate(opts) {
     return fetch(base + 'workout', {method: 'POST', headers: hdr({'Content-Type': 'application/json'}), body: JSON.stringify(body)})
       .then(function (r) { return r.json().catch(function () { return {ok: false, error: 'HTTP ' + r.status}; }); });
   }
-  store.saveWorkout = function (id, edit) { return postWorkout({id: id, title: edit.title, exercises: edit.exercises}); };
+  store.saveWorkout = function (id, edit) {
+    var b = {id: id, title: edit.title, exercises: edit.exercises};
+    if (has(edit, 'minutes')) b.minutes = edit.minutes;
+    if (has(edit, 'note')) b.note = edit.note;
+    return postWorkout(b);
+  };
+  store.addWorkout = function (o) {
+    return postWorkout({create: true, date: o.date, time: o.time, minutes: o.minutes, title: o.title, exercises: o.exercises, note: o.note});
+  };
   store.deleteWorkout = function (id) { return postWorkout({id: id, delete: true}); };
   store.note = function (name, text) { return rpost('note', {name: name, text: text}); };
   store.routine = function (payload) { return rpost('routine', payload); };

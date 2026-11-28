@@ -161,12 +161,57 @@ def main():
         call(base, "PUT", "/api/me/profile", {"lv": 9999, "workouts": [{"title": "x" * 500}]}, token=B)
         check(call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"]["lv"] == 50, "profile values are clamped")
         check(call(base, "DELETE", "/api/me/profile", token=B)[0] == 200 and call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"] is None, "profile can be withdrawn")
+        # v1.19: full stats snapshot (calendar + Progress), Share-my-stats off, per-photo public/private
+        days = [{"d": "2026-%02d-%02d" % (1 + i % 11, 1 + i % 27), "t": "Push", "m": 50, "v": 3000, "s": 12, "token": "LEAK"} for i in range(3500)]
+        full = dict(prof, days=days + [{"d": "not-a-date", "t": "x"}], week={"workouts": 2, "streak_weeks": 3, "best_week": 4, "avg_workouts_4w": 2.5,
+                    "avg_workouts_12w": None, "avg_sets_4w": 40, "weeks": [{"week": "2026-11-23", "workouts": 2}]},
+                    server="https://private.example/api", token="secret-token",
+                    progress={"stats": {"workouts": [{"date": "2026-11-01", "title": "Push", "minutes": 50, "sets": 12, "reps": 100, "volume": 3000, "note": "private"}],
+                                        "exercises": [{"name": "Bench", "sessions": 3, "best_e1rm": 100, "last_date": "2026-11-01"}],
+                                        "prs": [{"date": "2026-11-01", "ex": "Bench", "kind": "e1rm", "w": 90, "r": 3, "e1rm": 99}]},
+                              "prog": {"overall": {"lv": 26, "tier": "Intermediate", "score": 2.6},
+                                       "weeks": [{"week": "2026-10-26", "lv": 25, "score": 2.5, "sets": {"chest": 12, "<script>": 3}, "groups": {"push": 12, "evil": 9}}],
+                                       "muscles": {"chest": {"level": "Novice", "level_index": 1, "score": 1.2, "e1rm": 100, "lift": "Bench"}},
+                                       "strongest": "chest", "weakest": "DROP TABLE"},
+                              "bodyweight": [{"date": "2026-11-01", "kg": 80}]})
+        s, r, _ = call(base, "PUT", "/api/me/profile", full, token=B)
+        check(s == 200, "full stats snapshot saved")
+        pv = call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"]
+        dump = json.dumps(pv)
+        check(len(pv["days"]) == 3000 and pv["days"][0] == {"d": "2026-01-01", "t": "Push", "m": 50, "v": 3000, "s": 12}, "calendar days capped at 3000, compact, only whitelisted keys")
+        check("LEAK" not in dump and "secret-token" not in dump and "private.example" not in dump and "private" not in dump.replace('"shared"', ''), "nothing outside the whitelist (tokens, server link, notes) survives")
+        check("bodyweight" not in pv["progress"] and "<script>" not in dump and "evil" not in dump and pv["progress"]["prog"]["weakest"] is None, "progress: no bodyweight, bad keys dropped")
+        check(pv["progress"]["stats"]["exercises"][0]["best_e1rm"] == 100 and pv["progress"]["prog"]["weeks"][0]["groups"]["push"] == 12 and pv["week"]["avg_workouts_12w"] is None, "progress numbers kept for the friend's cards")
+        check(call(base, "PUT", "/api/me/profile", {"x": "y" * (1100 * 1024)}, token=B)[0] == 413, "oversized snapshot refused")
+        call(base, "PUT", "/api/me/profile", dict(full, shared=False), token=B)
+        pv = call(base, "GET", "/api/users/%s" % b_me["id"], token=A)[1]["profile"]
+        check(pv == {"lv": 26, "tier": "Intermediate", "score": 2.6, "xp": 0.4, "shared": False}, "Share my stats off: friends get name + level only")
+        s, r, _ = call(base, "PUT", "/api/me/photos?kind=progress&date=2026-11-20&lv=12", token=A, raw=jpeg_with_gps())
+        check(s == 200 and r["photo"]["kind"] == "progress" and r["photo"]["date"] == "2026-11-20", "make a progress photo public")
+        ph1 = r["photo"]
+        s, r, _ = call(base, "PUT", "/api/me/photos?kind=character&date=bad&lv=99", token=A, raw=jpeg_with_gps(400, 600))
+        ph2 = r["photo"]
+        check(s == 200 and ph2["kind"] == "character" and ph2["lv"] == 50 and len(ph2["date"]) == 10, "character photo public, date/level sanitised")
+        img = call(base, "GET", ph1["url"].replace("/gs", "", 1))[1]
+        im = Image.open(io.BytesIO(img))
+        check(max(im.size) <= 1280 and not im.getexif() and b"SecretPhoneMaker" not in img, "public photo is resized and EXIF/GPS stripped")
+        r = call(base, "GET", "/api/users/%s" % a_me["id"], token=B)[1]
+        check([p["id"] for p in r["photos"]] == [ph2["id"], ph1["id"]] or len(r["photos"]) == 2, "friend sees the public photos")
+        check(call(base, "GET", "/api/users/%s" % a_me["id"], token=C)[0] == 404, "non-friend can't see photos")
+        check(call(base, "DELETE", "/api/me/photos/%s" % ph1["id"], token=B)[1].get("deleted") is False, "can't delete someone else's photo")
+        check(call(base, "DELETE", "/api/me/photos/%s" % ph1["id"], token=A)[1].get("deleted") is True and
+              [p["id"] for p in call(base, "GET", "/api/users/%s" % a_me["id"], token=B)[1]["photos"]] == [ph2["id"]], "back to private: deleted from the server")
+        call(base, "PUT", "/api/me/photos?kind=progress&date=2026-11-21", token=A, raw=jpeg_with_gps(300, 300))
+        s, r, _ = call(base, "POST", "/api/me/photos/keep", {"ids": [ph2["id"]]}, token=A)
+        check(s == 200 and r["removed"] == 1 and [p["id"] for p in call(base, "GET", "/api/me/photos", token=A)[1]["photos"]] == [ph2["id"]], "keep-list drops public copies the phone no longer has")
         check(call(base, "PUT", "/api/owner/sessions", {"sessions": []}, token=B)[0] == 403, "non-owner cannot sync workouts")
         import sqlite3
         k = sqlite3.connect(str(data / "social.db")); k.execute("INSERT OR REPLACE INTO meta VALUES ('owner_id', ?)", (b_me["id"],)); k.commit(); k.close()
         check(call(base, "GET", "/api/me", token=B)[1].get("owner") is True and "owner" not in call(base, "GET", "/api/me", token=A)[1], "/api/me flags only the owner")
         check(call(base, "PUT", "/api/owner/sessions", {"sessions": [{"id": "x1", "start": 1, "exercises": {}}, "junk"]}, token=B)[1].get("count") == 1, "owner uploads sessions")
         check(call(base, "GET", "/api/owner/sessions", token=B)[1]["sessions"][0]["id"] == "x1" and call(base, "GET", "/api/owner/sessions", token=A)[0] == 403, "only the owner reads them back")
+        call(base, "PUT", "/api/owner/sessions", {"sessions": [], "deleted": [1763000000000, "x", True, -5]}, token=B)
+        check(json.loads((data / "owner_sessions.json").read_text())["deleted"] == [1763000000000], "owner sync carries deletions (start ms only)")
         s, r, _ = call(base, "GET", "/api/owner/srv/live?v=3&wait=0", token=B)
         check(s == 200 and r["path"] == "/api/gym/live?v=3&wait=0", "owner proxy forwards GET to the private server")
         s, r, _ = call(base, "POST", "/api/owner/srv/op", {"ops": [{"id": "1"}]}, token=B)

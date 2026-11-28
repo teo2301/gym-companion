@@ -3,9 +3,15 @@
 Alice = iPhone (WebKit), Bob = Android phone (Chromium). Alice joins with a profile photo, Bob opens her
 invite link on a fresh install (onboarding first, then join), they become friends, Alice finishes a
 workout and shares it with a caption + progress photo, Bob sees it (photo loads), likes and comments,
-Alice sees both. Then Bob unfriends and the post disappears. Fails on any page error.
+Alice sees both. 1.19: Bob opens Alice's profile: her calendar (read-only, today lit, tap shows the workout),
+her full Progress (read-only, no bodyweight), photos she marked Public (progress + character, with badges)
+appear and disappear when she makes them Private again, and "Share my stats" off leaves name + level only.
+Optional owner phase: with GYM_PRIVATE_SERVER=<private server folder> a throwaway copy of the private gym
+API (temp CSVs) is the owner upstream; Alice becomes the owner, the app links to it, and a workout
+back-dated from her calendar lands in (and is deleted from) that server's Companion CSV.
+Then Bob unfriends and the post disappears. Fails on any page error.
 
-Usage: <venv with playwright>/bin/python tools/e2e_social.py
+Usage: [GYM_PRIVATE_SERVER=...] <venv with playwright>/bin/python tools/e2e_social.py
 """
 import functools
 import http.server
@@ -53,6 +59,12 @@ def main():
     (site / "config.js").write_text("window.GYM_PUBLIC = true;\nwindow.GYM_SOCIAL_API = 'http://localhost:%d/gs';\n" % api_port)
 
     env = dict(os.environ, DATA_DIR=str(data), PORT=str(api_port), ORIGINS=site_origin)
+    priv, owner_proc, owner_tmp = os.environ.get("GYM_PRIVATE_SERVER"), None, tmp / "owner"
+    if priv and (Path(priv) / "tests" / "owner_upstream.py").exists():
+        up_port = port()
+        owner_proc = subprocess.Popen([sys.executable, str(Path(priv) / "tests" / "owner_upstream.py"), str(up_port), str(owner_tmp)],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        env["OWNER_UPSTREAM"] = "http://127.0.0.1:%d" % up_port
     api = subprocess.Popen([sys.executable, str(ROOT / "server" / "social.py")], env=env, stderr=subprocess.PIPE)
 
     class Quiet(http.server.SimpleHTTPRequestHandler):
@@ -174,6 +186,106 @@ def main():
         check(B.locator("#pv .swk").count() >= 1, "Alice's recent workouts are listed")
         B.screenshot(path=SHOTS / "social-5-bob-views-alice.png")
 
+        # --- 1.19: header name, Alice's calendar + full Progress for Bob (read-only)
+        check(A.inner_text("#hello").strip() == "Hi Alice", "Alice's header says 'Hi Alice' (her Friends name)")
+        a_title = A.evaluate("Store.workouts().then(function (l) { return l[0].title; })")
+        today = B.evaluate("todayStr()")
+        B.wait_for_selector("#pvCal .gcd[data-d]", timeout=8000)
+        cell = B.locator('#pvCal .gcd[data-d="%s"]' % today)
+        check(cell.count() == 1 and cell.get_attribute("data-n") == "1", "Alice's workout today is lit on her calendar for Bob")
+        cell.click(); B.wait_for_selector("#pvCal .gcday", timeout=3000)
+        check(a_title in B.inner_text("#pvCal .gcday"), "tapping the day shows Alice's workout title")
+        check(B.locator("#pvCal .gcadd").count() == 0 and B.locator("#pvCal button.gcw").count() == 0, "friend's calendar is read-only (no add / edit)")
+        check("streak" in B.inner_text("#pvCal") and B.locator("#pvCal [data-streak]").count() == 1, "friend's calendar shows month stats + streak")
+        B.locator("#pvCal").scroll_into_view_if_needed(); B.screenshot(path=SHOTS / "social-6-bob-alice-calendar.png")
+        B.click("#pvProg"); B.wait_for_selector("#prog.on #pg_train svg", timeout=10000)
+        check("Alice" in B.inner_text("#pgTitle") and "Workouts\n1" in B.inner_text(".pgtiles"), "Bob sees Alice's full Progress tiles")
+        check(B.locator("#pg_bw").count() == 0 and B.locator("#pg_evo").count() == 0 and B.locator("#pg_split").count() == 1 and B.locator("#pg_qual").count() == 1,
+              "friend Progress: same cards, no bodyweight / private photos")
+        B.screenshot(path=SHOTS / "social-7-bob-alice-progress.png")
+        B.evaluate("GymBack()"); B.wait_for_selector("#pv .pvnum", timeout=8000)
+        check(B.evaluate("cur") == "home", "Back from her Progress returns to her profile")
+
+        # --- photos: a progress photo + a character photo, Private by default, Public = friends see them
+        A.evaluate("closeSheet(); show('home')"); A.wait_for_timeout(300)
+        A.evaluate("GymProfile.open()"); A.wait_for_selector("#meCal .gcd", timeout=8000)
+        A.set_input_files("#mePhIn", prog); A.wait_for_selector('#mePh .tlrow[data-kind="progress"]', timeout=8000)
+        A.evaluate("GymPhoto.timeline().then(function (l) { return GymPhoto.savePhoto(l[0].img, {lv: 7}); }).then(function () { GymProfile.open(); })")
+        A.wait_for_selector('#mePh .tlrow[data-kind="character"]', timeout=8000)
+        check(A.locator('#mePh [data-vis="private"].on').count() == 2, "both photos start Private")
+        for kind in ("progress", "character"):
+            A.click('#mePh .tlrow[data-kind="%s"] [data-vis="public"]' % kind)
+            A.wait_for_function("(function(){var r=document.querySelector('#mePh .tlrow[data-kind=\"%s\"] [data-vis=public]');return r&&r.classList.contains('on')})()" % kind, timeout=10000)
+        A.screenshot(path=SHOTS / "social-8-alice-photos.png")
+        a_id = A.evaluate("Store.get('socialMe').then(function (m) { return m.id; })")
+        B.evaluate("Social.profile(%r)" % a_id)
+        B.wait_for_selector("#pvPh .tlrow", timeout=8000)
+        B.wait_for_function("Array.from(document.querySelectorAll('#pvPh .tlrow img')).every(function (i) { return i.complete && i.naturalWidth > 0; })", timeout=10000)
+        kinds = sorted(B.evaluate("Array.from(document.querySelectorAll('#pvPh .tlrow')).map(function (r) { return r.getAttribute('data-kind'); })"))
+        check(kinds == ["character", "progress"] and "Character" in B.inner_text("#pvPh"), "Bob sees both public photos in Alice's timeline, character badged")
+        check(B.locator("#pvPh [data-vis]").count() == 0, "friend's photo timeline has no visibility controls")
+        B.locator("#pvPh .tlimg").first.click(); B.wait_for_selector("#lbox img", timeout=3000)
+        B.screenshot(path=SHOTS / "social-9-bob-photo.png"); B.evaluate("GymBack()")
+        A.click('#mePh .tlrow[data-kind="progress"] [data-vis="private"]')
+        A.wait_for_function("(function(){var r=document.querySelector('#mePh .tlrow[data-kind=\"progress\"] [data-vis=private]');return r&&r.classList.contains('on')})()", timeout=10000)
+        B.evaluate("Social.profile(%r)" % a_id); B.wait_for_selector("#pvPh .tlrow", timeout=8000)
+        check(B.locator('#pvPh .tlrow[data-kind="progress"]').count() == 0, "back to Private: the progress photo is gone for Bob")
+        check(len(list((data / "media").glob("*.jpg"))) >= 1, "server keeps only what's public (+ avatars / posts)")
+
+        # --- Share my stats off: Bob sees name + level only; back on again
+        A.uncheck("#meShareStats"); A.wait_for_function("!document.getElementById('meShareStats').disabled", timeout=8000)
+        B.evaluate("Social.profile(%r)" % a_id); B.wait_for_selector("#pv .pvnum", timeout=8000)
+        check(B.locator("#pvHidden").count() == 1 and B.locator("#pvCal").count() == 0 and B.locator("#pvProg").count() == 0,
+              "Share my stats off: no calendar / Progress for friends, just name + level")
+        B.screenshot(path=SHOTS / "social-10-bob-stats-hidden.png")
+        A.check("#meShareStats"); A.wait_for_function("!document.getElementById('meShareStats').disabled", timeout=8000)
+        B.evaluate("Social.profile(%r)" % a_id); B.wait_for_selector("#pvCal .gcd", timeout=8000)
+        check(True, "Share my stats back on: calendar is back")
+        B.evaluate("closeSheet()"); A.evaluate("GymBack()")
+
+        # --- owner path: Alice is the owner; the app links to her private server; calendar back-dating syncs there
+        if owner_proc:
+            import csv, sqlite3
+            k = sqlite3.connect(str(data / "social.db")); k.execute("INSERT OR REPLACE INTO meta VALUES ('owner_id', ?)", (a_id,)); k.commit(); k.close()
+            A.reload(); A.wait_for_function("window.Store && Store.remote === true", timeout=20000)
+            check(True, "owner login links the public app to the owner's server")
+            A.wait_for_timeout(800)
+            if A.locator("#lvup.on").count():
+                A.click("#lvup")
+            A.evaluate("GymProfile.open()"); A.wait_for_selector("#meCal .gcd", timeout=10000)
+            day = A.evaluate("(function(){var d=new Date(Date.now()-2*864e5);return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)})()")
+            for _ in range(2):
+                if A.locator('#meCal .gcd[data-d="%s"]' % day).count():
+                    break
+                A.click('#meCal [data-nav="-1"]'); A.wait_for_timeout(200)
+            A.click('#meCal .gcd[data-d="%s"]' % day); A.click('#meCal .gcadd[data-add="%s"]' % day)
+            A.wait_for_selector("#weTitle", state="visible", timeout=5000)
+            A.fill("#weTitle", "Owner Backdated"); A.fill("#weMin", "30")
+            A.fill("#wSearch", "squat"); A.locator("#wPick .it").first.click(); A.wait_for_timeout(200)
+            A.locator('#wBody input[data-k="w"]').first.fill("90"); A.locator('#wBody input[data-k="r"]').first.fill("5")
+            A.click("#wSave"); A.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=10000)
+            A.wait_for_timeout(1000)
+            csvp = owner_tmp / "Companion" / "workout_data.csv"
+            rows = list(csv.DictReader(open(csvp))) if csvp.exists() else []
+            check(any(r["title"] == "Owner Backdated" and r["start_time"].startswith(str(int(day[8:]))) or r["title"] == "Owner Backdated" for r in rows),
+                  "back-dated workout reached the owner's server Companion CSV")
+            check(A.locator('#meCal .gcd[data-d="%s"]' % day).get_attribute("data-n") == "1", "owner calendar lights the back-dated day")
+            A.screenshot(path=SHOTS / "social-11-owner-calendar.png")
+            A.click('#meCal .gcd[data-d="%s"]' % day); A.click("#meCal .gcday button.gcw"); A.wait_for_selector("#wDel", timeout=8000)
+            A.click("#wDel"); A.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=10000)
+            A.wait_for_timeout(800)
+            rows = list(csv.DictReader(open(csvp)))
+            check(not any(r["title"] == "Owner Backdated" for r in rows) and list((owner_tmp / "Companion" / "_edit_backups").glob("*.csv")),
+                  "deleting it removes it from the owner's CSV (backup copy kept first)")
+            hevy_day = "2026-11-02"
+            A.evaluate("GymCal.reset('own'); GymProfile.refresh()"); A.wait_for_timeout(500)
+            for _ in range(3):
+                if A.locator('#meCal .gcd[data-d="%s"]' % hevy_day).count():
+                    break
+                A.click('#meCal [data-nav="-1"]'); A.wait_for_timeout(200)
+            A.click('#meCal .gcd[data-d="%s"]' % hevy_day)
+            check("View" in A.inner_text("#meCal .gcday"), "Hevy-imported workouts stay read-only on the calendar")
+
         # --- Bob unfriends: the post disappears for him
         B.evaluate("closeSheet()"); B.wait_for_timeout(300); B.evaluate("Social.friends()")
         B.wait_for_selector("#sList .sfr button", timeout=8000); B.click("#sList .sfr button"); B.wait_for_timeout(800)
@@ -182,6 +294,8 @@ def main():
         check(B.locator("#sFeed .spost").count() == 0, "after unfriending, Bob no longer sees Alice's post")
         wk.close(); cr.close()
     srv.shutdown(); api.terminate()
+    if owner_proc:
+        owner_proc.terminate()
     err = api.communicate(timeout=5)[1].decode()
     if "ERROR" in err:
         problems.append("server error: " + err[-500:])

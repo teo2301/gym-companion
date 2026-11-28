@@ -8,7 +8,8 @@
 var BASE = String(window.GYM_SOCIAL_API || '').replace(/\/+$/, '');
 var ORIGIN = BASE.replace(/^(https?:\/\/[^\/]+).*$/, '$1');
 var INVITE_URL = 'https://teo2301.github.io/gym-companion/#friend=';
-var token = null, me = null, pendingInvite = null, feedCache = [], shareOn = true, lastSync = 0, lastSig = '', owner = null, lastOwnSig = '', lastOwnAt = 0;
+var token = null, me = null, pendingInvite = null, feedCache = [], shareOn = true, lastSync = 0, lastSig = '', owner = null, lastOwnSig = '', lastOwnAt = 0, lastPhotoAt = 0;
+var SNAP_MAX = 900 * 1024;            // the server takes up to 1 MB; trim history before that
 
 function $(id) { return document.getElementById(id); }
 function e(t) { return window.esc ? window.esc(t) : String(t).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
@@ -35,7 +36,11 @@ function api(method, path, body, blob) {
 }
 function remember(t, m) {
   if (t) { token = t; Store.set('socialToken', t); }
-  if (m) { me = m; Store.set('socialMe', m); }
+  if (m) {
+    me = m; Store.set('socialMe', m);
+    if (m.name) Store.set('userName', m.name);      // the header says "Hi <your Friends name>"
+    if (window.updateHello) setTimeout(window.updateHello, 0);
+  }
 }
 function forget() { token = null; me = null; Store.set('socialToken', null); Store.set('socialMe', null); renderHome(); }
 
@@ -201,6 +206,7 @@ function joinSheet() {
     '<button class="log" id="sGo">Join</button>' +
     '<button class="finish" id="sHave">I already have an account (recovery key)</button>');
   $('sHave').onclick = function () { recoverSheet(); };
+  Store.get('userName').then(function (n) { if (n && $('sName') && !$('sName').value) $('sName').value = n; }).catch(function () {});
   wirePicker('sAva', true, function (b) { blob = b; });
   $('sGo').onclick = function () {
     var name = $('sName').value.trim(); if (!name) { toast('Pick a name'); return; }
@@ -220,7 +226,8 @@ function profileSheet() {
     '<div style="display:flex;align-items:center;gap:14px;margin-bottom:12px">' + avatar(me, 'big') + '<div style="flex:1">' + photoPicker('sAva2', 'Change photo') + '</div></div>' +
     '<input class="txt" id="sName2" maxlength="30" value="' + e(me.name) + '">' +
     (owner && window.GYM_PUBLIC ? '<label class="stog"><input type="checkbox" id="sUseSrv"' + (Store.remote ? ' checked' : '') + '><span>Use my server (watch live link, dashboards)</span></label>' : '') +
-    '<label class="stog"><input type="checkbox" id="sShareProf"' + (shareOn ? ' checked' : '') + '><span>Let friends see my level and recent workouts</span></label>' +
+    '<label class="stog"><input type="checkbox" id="sShareProf"' + (shareOn ? ' checked' : '') + '><span>Share my stats (calendar, Progress, recent workouts). Off = friends see only your name and level.</span></label>' +
+    '<p class="sub" style="font-size:12.5px;margin:-4px 2px 10px">Photos are shared one at a time: My profile → Progress photos → Public / Private.</p>' +
     '<button class="log" id="sSaveP">Save</button>' +
     '<button class="finish" id="sRecov">🔑 Recovery key (keeps your friends if you lose your login)</button>' +
     '<button class="finish" id="sReset">Get a new friend code</button>' +
@@ -232,7 +239,7 @@ function profileSheet() {
     var srv = $('sUseSrv'), srvChange = srv && srv.checked !== !!Store.remote;
     if (srvChange) { try { if (srv.checked) localStorage.removeItem('gymRemoteOff'); else localStorage.setItem('gymRemoteOff', '1'); localStorage.setItem('gymRemoteTok', token); } catch (err) {} }
     var want = $('sShareProf').checked;
-    if (want !== shareOn) { shareOn = want; Store.set('socialShare', want); jobs.push(want ? sync(true) : api('DELETE', '/api/me/profile')); }
+    if (want !== shareOn) jobs.push(setSharing(want));
     if (name && name !== me.name) jobs.push(api('POST', '/api/me', {name: name}).then(function (j) { remember(null, j.me); }));
     if (blob) jobs.push(api('PUT', '/api/me/avatar', undefined, blob).then(function (j) { remember(null, j.me); }));
     Promise.all(jobs).then(function () { if (srvChange) { location.reload(); return; } closeSheet(); toastOk('Profile saved'); renderHome(); }).catch(function (err) { toast(err.message); });
@@ -340,7 +347,10 @@ function cardFor(w, summary) {
 }
 function buildSnapshot() {
   var o = (window.prog && prog.overall) || null; if (!o || !Store.workouts) return Promise.resolve(null);
-  return Store.workouts().then(function (list) {
+  var base = {lv: o.lv, tier: o.tier, score: o.score, xp: ((o.score * 10) % 1)};
+  if (!shareOn) { base.shared = false; return Promise.resolve(base); }     // "Share my stats" off: name + level only
+  return Promise.all([Store.workouts(), Store.stats ? Store.stats().catch(function () { return null; }) : null]).then(function (v) {
+    var list = v[0], st = v[1], P = window.prog || {};
     var total = list.reduce(function (t, w) { return t + (w.total_volume_kg || 0); }, 0);
     var weeks = {}, wk = function (ms) { return Math.floor((ms - 3 * 86400000) / (7 * 86400000)); };   // Monday-based weeks
     list.forEach(function (w) { weeks[wk(w.start)] = 1; });
@@ -351,24 +361,86 @@ function buildSnapshot() {
     return Promise.all(list.slice(0, 12).map(function (w) { return Store.workout(w.id).then(function (f) { return cardFor(f); }).catch(function () { return null; }); }))
       .then(function (cards) {
         var mn = window.mname || function (x) { return x; };
-        return {lv: o.lv, tier: o.tier, score: o.score, xp: ((o.score * 10) % 1),
-          muscles: Object.keys(prog.muscles || {}).map(function (m) { var x = prog.muscles[m]; return {name: mn(m), level: x.level, score: x.score, lift: x.lift || ''}; })
+        var snap = {lv: o.lv, tier: o.tier, score: o.score, xp: ((o.score * 10) % 1), shared: true,
+          muscles: Object.keys(P.muscles || {}).map(function (m) { var x = P.muscles[m]; return {name: mn(m), level: x.level, score: x.score, lift: x.lift || ''}; })
             .sort(function (a, b) { return b.score - a.score; }),
           stats: {workouts: list.length, volume: Math.round(total), streak_weeks: streak, avg_week: Math.round(recent / 12 * 10) / 10, since: oldest},
-          workouts: cards.filter(Boolean)};
+          workouts: cards.filter(Boolean),
+          // calendar: every workout, newest first, compact (date, title, minutes, kg, sets) - nothing else
+          days: list.map(function (w) { return {d: w.date_str, t: w.title, m: w.duration_min || 0, v: w.total_volume_kg || 0, s: w.total_sets || 0}; }),
+          week: window.plan && plan.week ? plan.week : null,
+          progress: st ? {stats: {workouts: st.workouts || [], exercises: (st.exercises || []).slice(0, 200), prs: (st.prs || []).slice(-500)},
+            prog: {overall: P.overall || null, strongest: P.strongest || null, weakest: P.weakest || null,
+              weeks: (P.weeks || []).map(function (w) { return {week: w.week, lv: w.lv, score: w.score, sets: w.sets || {}, groups: w.groups || {}}; }),
+              muscles: P.muscles || {}}} : null};
+        return fit(snap);
       });
   });
 }
+/* keep the snapshot under the server's cap: drop the oldest history first */
+function fit(snap) {
+  var cuts = [function () { snap.progress && (snap.progress.prog.weeks = snap.progress.prog.weeks.slice(-260)); },
+    function () { snap.days = snap.days.slice(0, 1500); },
+    function () { snap.progress && (snap.progress.stats.workouts = snap.progress.stats.workouts.slice(-1000)); },
+    function () { snap.progress && (snap.progress.prog.weeks = snap.progress.prog.weeks.slice(-104)); },
+    function () { snap.days = snap.days.slice(0, 600); snap.progress && (snap.progress.stats.workouts = snap.progress.stats.workouts.slice(-400)); }];
+  for (var i = 0; JSON.stringify(snap).length > SNAP_MAX && i < cuts.length; i++) cuts[i]();
+  return snap;
+}
+function pushProfile() {
+  return buildSnapshot().then(function (snap) {
+    if (!snap) return;
+    var sig = JSON.stringify(snap);
+    return api('PUT', '/api/me/profile', snap).then(function () { lastSync = Date.now(); lastSig = sig; });
+  });
+}
+/* "Share my stats" master switch (default on). Off = friends see only name + level; photos stay per photo. */
+function setSharing(on) {
+  shareOn = !!on;
+  return Store.set('socialShare', shareOn).then(function () { return token ? pushProfile() : null; });
+}
 /* push my snapshot (throttled; skipped if nothing changed) */
 function sync(force) {
-  if (token && enabled()) ownerSync(force);
-  if (!token || !shareOn || !enabled()) return Promise.resolve();
+  if (token && enabled()) { ownerSync(force); syncPhotos(force); }
+  if (!token || !enabled()) return Promise.resolve();
   if (!force && Date.now() - lastSync < 5 * 60 * 1000) return Promise.resolve();
   return buildSnapshot().then(function (snap) {
     if (!snap) return;
     var sig = JSON.stringify(snap);
     if (!force && sig === lastSig) { lastSync = Date.now(); return; }
     return api('PUT', '/api/me/profile', snap).then(function () { lastSync = Date.now(); lastSig = sig; });
+  }).catch(function () {});
+}
+
+/* ---------- photos: Public (friends only) or Private (this phone only), one photo at a time */
+function findPhoto(kind, id) {
+  return GymPhoto.timeline().then(function (l) { return l.filter(function (p) { return p.kind === kind && p.id === id; })[0] || null; });
+}
+function upload(p) {
+  var lv = p.kind === 'character' ? (p.lv || 0) : ((window.prog && prog.overall && prog.overall.lv) || 0);
+  return api('PUT', '/api/me/photos?kind=' + p.kind + '&date=' + encodeURIComponent(p.date) + '&lv=' + lv, undefined, GymPhoto.blobOf(p.img))
+    .then(function (j) { return GymPhoto.setShare(p.kind, p.id, true, j.photo.id); });
+}
+function setPhotoPublic(kind, id, pub) {
+  if (!token || !window.GymPhoto) return Promise.reject(new Error('Join Friends first'));
+  return findPhoto(kind, id).then(function (p) {
+    if (!p) throw new Error('Photo not found');
+    if (pub) return p.pub && p.rid ? p : upload(p);
+    var del = p.rid ? api('DELETE', '/api/me/photos/' + p.rid) : Promise.resolve();
+    return del.then(function () { return GymPhoto.setShare(kind, id, false); });
+  });
+}
+/* make the server match the phone: upload public photos it lacks, drop ones the phone no longer has / made private */
+function syncPhotos(force) {
+  if (!window.GymPhoto || (!force && Date.now() - lastPhotoAt < 10 * 60 * 1000)) return Promise.resolve();
+  lastPhotoAt = Date.now();
+  return Promise.all([GymPhoto.timeline(), api('GET', '/api/me/photos')]).then(function (v) {
+    var have = {}; v[1].photos.forEach(function (x) { have[x.id] = 1; });
+    var pub = v[0].filter(function (p) { return p.pub; }), chain = Promise.resolve();
+    pub.forEach(function (p) { if (!p.rid || !have[p.rid]) chain = chain.then(function () { return upload(p); }); });
+    return chain.then(function () { return GymPhoto.timeline(); }).then(function (l) {
+      return api('POST', '/api/me/photos/keep', {ids: l.filter(function (p) { return p.pub && p.rid; }).map(function (p) { return p.rid; })});
+    });
   }).catch(function () {});
 }
 
@@ -386,38 +458,62 @@ function ownerSync(force) {
   if (!owner || !window.GYM_PUBLIC || Store.mode !== 'public' || !Store.backupData) return Promise.resolve();
   if (!force && Date.now() - lastOwnAt < 60 * 1000) return Promise.resolve();
   return Store.backupData().then(function (d) {
-    var sig = (d.sessions || []).length + ':' + (d.sessions || []).reduce(function (m, x) { return Math.max(m, x.end || x.start || 0); }, 0);
+    var gone = (d.settings && d.settings.deletedWorkouts) || [];
+    var sig = (d.sessions || []).length + ':' + (d.sessions || []).reduce(function (m, x) { return Math.max(m, x.end || x.start || 0, x.editedAt || 0, x.addedAt || 0); }, 0) + ':' + gone.length;
     if (!force && sig === lastOwnSig) { lastOwnAt = Date.now(); return; }
-    return api('PUT', '/api/owner/sessions', {sessions: d.sessions || []}).then(function () { lastOwnAt = Date.now(); lastOwnSig = sig; });
+    return api('PUT', '/api/owner/sessions', {sessions: d.sessions || [], deleted: gone}).then(function () { lastOwnAt = Date.now(); lastOwnSig = sig; });
   }).catch(function () {});
 }
 
-/* ---------- a friend's profile page */
+/* ---------- a friend's profile page: level, calendar, full Progress (read-only), photos timeline */
+var friendCache = {};
 function profileView(id) {
   openSheet('<div id="pv"><p class="sub">Loading…</p></div>');
   api('GET', '/api/users/' + encodeURIComponent(id)).then(function (j) {
     if (!$('pv')) return;
-    var p = j.profile, u = j.user, h = '<div class="pvh">' + avatar(u, 'big') + '<div><h2 style="margin:0;font-size:24px">' + e(u.name) + (j.mine ? ' <small style="color:var(--dim);font-size:13px">(you)</small>' : '') + '</h2>' +
+    friendCache[id] = j;
+    var p = j.profile, u = j.user, h = '<div class="pvh">' + avatar(u, 'big') + '<div><h2 style="margin:0;font-size:24px">' + e(u.name) + (j.mine ? ' <small style="color:var(--dim);font-size:13px">(you, as friends see you)</small>' : '') + '</h2>' +
       '<div class="sub">' + (j.posts ? j.posts + ' post' + (j.posts > 1 ? 's' : '') + ' · ' : '') + (j.updated ? 'updated ' + e(ago(j.updated)) : '') + '</div></div></div>';
+    var photos = (j.photos || []).map(function (x) { return {kind: x.kind === 'character' ? 'character' : 'progress', id: x.id, date: x.date, lv: x.lv, src: media(x.url)}; });
+    var photosHtml = '<div class="label" style="margin:16px 2px 6px">Progress photos</div><div id="pvPh"></div>';
+    function drawPhotos() {
+      if ($('pvPh')) GymProfile.timeline($('pvPh'), photos, {key: 'f' + id, editable: false,
+        emptyText: (j.mine ? 'You haven’t' : e(u.name) + ' hasn’t') + ' made any photos public.'});
+    }
     if (!p) {
-      $('pv').innerHTML = h + '<p class="sub" style="margin-top:14px">' + (j.mine ? 'You aren’t sharing your profile. Turn it on in Friends → Profile.' : e(u.name) + ' hasn’t shared their level or workouts yet. They need the latest app version and to open it once.') + '</p>';
-      return;
+      $('pv').innerHTML = h + '<p class="sub" style="margin-top:14px">' + (j.mine ? 'Your stats aren’t shared yet. Open the app once more, or turn on Share my stats in Friends → Profile.' : e(u.name) + ' hasn’t shared their stats yet. They need the latest app version and to open it once.') + '</p>' + photosHtml;
+      drawPhotos(); return;
     }
     var tc = ['#5b7a99', '#3ea8ff', '#3ee08f', '#d7ff3e', '#ffb020'], ti = p.score < 0 ? -1 : Math.min(4, Math.floor(p.score)), col = ti < 0 ? '#8d94a0' : tc[ti];
     h += '<div class="pvlv"><div class="pvfig">' + (window.Lifter ? Lifter.svg(p.score) : '') + '</div><div class="pvlvt"><small>Lifter level</small>' +
       '<b class="pvnum">' + p.lv + '</b><span style="color:' + col + ';font-weight:800">' + e(p.tier) + '</span>' +
       '<div class="pvbar"><i style="width:' + Math.round(p.xp * 100) + '%;background:' + col + '"></i></div></div></div>';
+    if (p.shared === false) {
+      $('pv').innerHTML = h + '<p class="sub" style="margin-top:14px" id="pvHidden">' + (j.mine ? 'Share my stats is off, so friends see only your name and level.' : e(u.name) + ' keeps their stats private: you can see their name and level.') + '</p>' + photosHtml;
+      drawPhotos(); return;
+    }
     var s = p.stats;
     h += '<div class="pvstats"><div><b>' + s.workouts + '</b><small>workouts</small></div><div><b>' + (s.volume >= 1000 ? Math.round(s.volume / 1000).toLocaleString() + 't' : s.volume + ' kg') + '</b><small>lifted</small></div>' +
       '<div><b>' + s.streak_weeks + '</b><small>week streak</small></div><div><b>' + s.avg_week + '</b><small>per week</small></div></div>';
+    h += '<div class="label" style="margin:16px 2px 6px">Training calendar</div><div class="pvcal" id="pvCal"></div>';
+    if (p.progress) h += '<button class="log" id="pvProg" style="margin-top:12px">📈 See ' + (j.mine ? 'my' : e(u.name) + '’s') + ' full Progress</button>';
     if (p.muscles.length) h += '<div class="label" style="margin:14px 2px 6px">Muscle levels</div>' + p.muscles.map(function (m) {
       var i = m.score < 0 ? 0 : Math.min(4, Math.floor(m.score)), w = Math.max(4, Math.min(100, (m.score + 1) / 6 * 100));
       return '<div class="pvm"><span>' + e(m.name) + '</span><div><i style="width:' + w + '%;background:' + tc[i] + '"></i></div><small>' + e(m.level) + '</small></div>';
     }).join('');
+    h += photosHtml;
     h += '<div class="label" style="margin:14px 2px 6px">Recent workouts</div>' + (p.workouts.length ? p.workouts.map(function (w) {
       return '<div class="pvwd">' + e(w.date) + '</div>' + workoutCard(w);
     }).join('') : '<p class="sub">No workouts yet.</p>');
     $('pv').innerHTML = h;
+    // calendar: strictly read-only for friends (no add / edit controls), built with textContent
+    GymCal.render($('pvCal'), (p.days || []).map(function (d) { return {date: d.d, title: d.t, minutes: d.m, volume: d.v, sets: d.s}; }),
+      {key: 'f' + id, editable: false});
+    if ($('pvProg')) $('pvProg').onclick = function () {
+      buzz(); closeSheet();
+      Progress.openFriend({name: u.name, mine: j.mine, data: p.progress, week: p.week, back: function () { profileView(id); }});
+    };
+    drawPhotos();
   }).catch(function (err) { if ($('pv')) $('pv').innerHTML = '<p class="sub">' + e(err.message) + '</p>'; });
 }
 
@@ -538,10 +634,12 @@ function init() {
     token = v[0] || null; me = v[1] || null;
     renderHome();
     Store.get('socialShare').then(function (x) { shareOn = x !== false; }, function () {});
+    if (window.GymProfile) GymProfile.refreshPhotos();
     if (token) api('GET', '/api/me').then(function (j) { remember(null, j.me); if (j.owner) { owner = {dashboard_url: j.dashboard_url || ''}; renderHome(); linkOwner(); } if (pendingInvite) acceptInvite(); setTimeout(sync, 1500); }).catch(function () {});
     else if (pendingInvite) whenQuiet(joinSheet);
   });
 }
 window.Social = {sync: sync, init: init, renderHome: renderHome, share: shareSheet, feed: feedSheet, friends: friendsSheet,
-  joined: function () { return !!token; }, enabled: enabled};
+  joined: function () { return !!token; }, enabled: enabled, profile: profileView,
+  sharing: function () { return shareOn; }, setSharing: setSharing, setPhotoPublic: setPhotoPublic, syncPhotos: syncPhotos};
 })();

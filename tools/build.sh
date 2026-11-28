@@ -17,7 +17,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC=${GYM_SRC:-$HOME/projects/services/serverchat/static/gym}
 DOCS="$ROOT/docs"
 ASSETS="$ROOT/android/app/src/main/assets/gym"
-APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js photo.js social.js charts.js progress.js cardio.js exercises.json manifest.json
+APP_FILES=(index.html body.js character.js gymcore.js gymstore.js backup.js pwa.js photo.js social.js charts.js progress.js calendar.js profile.js cardio.js exercises.json manifest.json
            icon-180.png icon-192.png icon-512.png)
 
 SOCIAL_API=${GYM_SOCIAL_API:-$(cat "$HOME/.config/gym-companion/social-api.txt" 2>/dev/null)}
@@ -44,6 +44,7 @@ printf '%s' "$PUBLIC_CONFIG" > "$DOCS/config.js"
 BUILD=$(cd "$DOCS" && cat "${APP_FILES[@]}" config.js | sha256sum | cut -c1-12)
 sed "s/__BUILD__/$BUILD/" "$SRC/sw-public.js" > "$DOCS/sw-public.js"
 cp "$ROOT/tools/site/privacy.html" "$DOCS/privacy.html"
+cp "$ROOT/tools/site/download.html" "$DOCS/download.html"
 touch "$DOCS/.nojekyll"
 rm -f "$DOCS/sw.js"   # the private no-cache worker must never ship publicly
 

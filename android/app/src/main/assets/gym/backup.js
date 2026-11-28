@@ -36,20 +36,23 @@ function countsOf(data) {
     routines: Object.keys((data.routines && data.routines.templates) || {}).length,
     notes: Object.keys(data.notes || {}).length,
     custom: (data.customExercises || data.custom || []).length,
-    photos: ((data.character && data.character.photos) || []).length,
+    photos: ((data.character && data.character.photos) || []).length + ((data.character && data.character.progress) || []).length,
     from: dates.length ? dates[0] : null, to: dates.length ? dates[dates.length - 1] : null};
 }
 function restoreChar(data, strategy) {
   if (!global.GymPhoto) return Promise.resolve(false);
   // Replace must clear photos too, even from an older backup that has no character field.
-  var character = (data && data.character) || (strategy === 'replace' ? {mode: 'cartoon', photos: []} : null);
+  var character = (data && data.character) || (strategy === 'replace' ? {mode: 'cartoon', photos: [], progress: []} : null);
   if (!character) return Promise.resolve(false);
   var merged = strategy === 'replace' ? Promise.resolve(character) : global.GymPhoto.data().then(function (cur) {
     // merge: keep what's on this phone, add the backup's photos it doesn't have (by id), newest 6 by date
     var byId = {};
     (cur.photos || []).concat((character && character.photos) || []).forEach(function (p) { if (p && p.id && !byId[p.id]) byId[p.id] = p; });
     var photos = Object.keys(byId).map(function (k) { return byId[k]; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
-    return {mode: cur.photos && cur.photos.length ? cur.mode : character.mode, current: cur.current || character.current, photos: photos.slice(-6)};
+    var pb = {};                              // progress photos (1.19): same merge by id; older backups have none
+    (cur.progress || []).concat((character && character.progress) || []).forEach(function (p) { if (p && p.id && !pb[p.id]) pb[p.id] = p; });
+    return {mode: cur.photos && cur.photos.length ? cur.mode : character.mode, current: cur.current || character.current, photos: photos.slice(-6),
+      progress: Object.keys(pb).map(function (k) { return pb[k]; })};
   });
   return merged.then(function (c) { return global.GymPhoto.saveData(c); }).then(function () {
     if (typeof global.renderLifter === 'function') global.renderLifter();
@@ -80,7 +83,7 @@ function previewSheet(data) {
     '<div class="prow"><div>Routines</div><span class="num">' + c.routines + '</span></div>' +
     '<div class="prow"><div>Exercise notes</div><span class="num">' + c.notes + '</span></div>' +
     '<div class="prow"><div>Custom exercises</div><span class="num">' + c.custom + '</span></div>' +
-    '<div class="prow"><div>Character photos</div><span class="num">' + c.photos + '</span></div></div>' +
+    '<div class="prow"><div>Character + progress photos</div><span class="num">' + c.photos + '</span></div></div>' +
     '<button class="log" id="rMerge" style="margin-top:14px">Merge into this phone</button>' +
     '<button class="danger" id="rReplace">Replace everything</button>' +
     '<button class="danger" id="rCancel">Cancel</button>';

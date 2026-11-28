@@ -1,30 +1,50 @@
 /* Gym Companion — on-device photo character.
  *
- * The full-body picture never leaves the phone: it is cropped into the portrait frame on the device,
+ * The full-body picture stays on the phone: it is cropped into the portrait frame on the device,
  * stored in a small on-device IndexedDB (never the private server or localStorage), and only included
- * in the JSON backup the user downloads. No upload, no server endpoint, no background removal.
+ * in the JSON backup the user downloads. No background removal.
+ *
+ * Progress photos (1.19): dated photos for the profile timeline, kept in the same on-device store.
+ * Every photo (character or progress) is Private by default. Marking one Public (pub: true) is the only
+ * way it leaves the phone: social.js uploads a resized copy (the friends server re-encodes it, stripping
+ * EXIF/GPS) that only friends can see, and remembers its server id (rid). Back to Private deletes it there.
  */
 (function () {
   'use strict';
   var global = window;
   var KEY = 'character';
   var MAX_PHOTOS = 6;
+  var MAX_PROGRESS = 120;                   // progress photos (~150 KB each at 1080 px)
+  var PROGRESS_PX = 1080;
   var FRAME_W = 480, FRAME_H = 640;         // portrait frame used for the card and the timeline
 
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   // Photos can arrive from a restored backup file, so treat every field as untrusted.
   var IMG_RE = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+\/=]+$/;
+  function today() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function share(out, p) {                  // public/private flag (default private) + the server copy's id
+    out.pub = p.pub === true;
+    if (out.pub && typeof p.rid === 'string' && /^[0-9a-f]{16}$/.test(p.rid)) out.rid = p.rid;
+    return out;
+  }
   function cleanPhoto(p) {
     if (!p || typeof p.img !== 'string' || !IMG_RE.test(p.img)) return null;
-    return {id: String(p.id || uid()).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || uid(),
-      date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : new Date().toISOString().slice(0, 10),
-      lv: Math.max(1, Math.min(50, parseInt(p.lv, 10) || 1)), score: isFinite(+p.score) ? +p.score : 0, img: p.img};
+    return share({id: String(p.id || uid()).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || uid(),
+      date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : today(),
+      lv: Math.max(1, Math.min(50, parseInt(p.lv, 10) || 1)), score: isFinite(+p.score) ? +p.score : 0, img: p.img}, p);
   }
+  function cleanProgress(p) {
+    if (!p || typeof p.img !== 'string' || !IMG_RE.test(p.img)) return null;
+    return share({id: String(p.id || uid()).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || uid(),
+      date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : today(), img: p.img}, p);
+  }
+  function byDate(a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; }
   function norm(d) {
     d = d || {};
     var photos = Array.isArray(d.photos) ? d.photos.map(cleanPhoto).filter(Boolean).slice(-MAX_PHOTOS) : [];
     var cur = typeof d.current === 'string' && photos.some(function (p) { return p.id === d.current; }) ? d.current : null;
-    return {mode: d.mode === 'photo' && photos.length ? 'photo' : 'cartoon', photos: photos, current: cur};
+    var prog = Array.isArray(d.progress) ? d.progress.map(cleanProgress).filter(Boolean).sort(byDate).slice(-MAX_PROGRESS) : [];
+    return {mode: d.mode === 'photo' && photos.length ? 'photo' : 'cartoon', photos: photos, current: cur, progress: prog};
   }
   /* Private mode keeps Store.* in localStorage (~5 MB), too small for body photos. Use a small
      IndexedDB of our own in BOTH modes: still on-device only, but with room for a few photos. */
@@ -113,8 +133,8 @@
   function savePhoto(img, meta) {
     meta = meta || {};
     return data().then(function (d) {
-      d.photos.push({id: uid(), date: meta.date || new Date().toISOString().slice(0, 10),
-        lv: meta.lv || 1, score: meta.score || 0, img: img});
+      d.photos.push({id: uid(), date: meta.date || today(),
+        lv: meta.lv || 1, score: meta.score || 0, img: img, pub: false});
       d.photos = d.photos.slice(-MAX_PHOTOS);
       d.mode = 'photo';
       d.current = d.photos[d.photos.length - 1].id;
@@ -166,9 +186,63 @@
     }).catch(function () {});
   }
 
+  /* ---------- progress photos + public/private (1.19) */
+  function shrink(file, max) {
+    return loadBitmap(file).then(function (bmp) {
+      var w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight, k = Math.min(1, max / Math.max(w, h));
+      var c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+      var ctx = c.getContext('2d'); ctx.fillStyle = '#0c0e12'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(bmp, 0, 0, c.width, c.height);
+      if (typeof bmp.close === 'function') bmp.close();
+      return c.toDataURL('image/jpeg', 0.85);   // re-drawn on a canvas: no EXIF/GPS survives on the phone copy either
+    });
+  }
+  function addProgress(file, date) {
+    var d = /^\d{4}-\d{2}-\d{2}$/.test(String(date)) && date <= today() ? date : today();
+    return shrink(file, PROGRESS_PX).then(function (img) {
+      return data().then(function (x) {
+        var p = {id: uid(), date: d, img: img, pub: false};
+        x.progress.push(p);
+        return save(x).then(function () { return p; });
+      });
+    });
+  }
+  function removeProgress(id) {
+    return data().then(function (d) { d.progress = d.progress.filter(function (p) { return p.id !== id; }); return save(d); });
+  }
+  function find(d, kind, id) {
+    var list = kind === 'character' ? d.photos : d.progress;
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+  /** Flag one photo public (with the server copy's id) or private. */
+  function setShare(kind, id, pub, rid) {
+    return data().then(function (d) {
+      var p = find(d, kind, id); if (!p) return null;
+      p.pub = !!pub; if (pub && rid) p.rid = rid; else delete p.rid;
+      return save(d).then(function () { return p; });
+    });
+  }
+  /** Every photo as one dated timeline: [{kind, id, date, img, pub, rid, lv}], oldest first. */
+  function timeline() {
+    return data().then(function (d) {
+      return d.photos.map(function (p) { return {kind: 'character', id: p.id, date: p.date, img: p.img, pub: p.pub, rid: p.rid, lv: p.lv}; })
+        .concat(d.progress.map(function (p) { return {kind: 'progress', id: p.id, date: p.date, img: p.img, pub: p.pub, rid: p.rid}; }))
+        .sort(byDate);
+    });
+  }
+  /** A JPEG Blob of a stored photo (for uploading the public copy). */
+  function blobOf(img) {
+    var b64 = img.split(',')[1], bin = atob(b64), arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], {type: 'image/jpeg'});
+  }
+
   global.GymPhoto = {
     KEY: KEY, FRAME_W: FRAME_W, FRAME_H: FRAME_H,
     data: data, saveData: save, current: current, frame: frame, render: render,
-    savePhoto: savePhoto, useCartoon: useCartoon, usePhoto: usePhoto, remove: remove
+    savePhoto: savePhoto, useCartoon: useCartoon, usePhoto: usePhoto, remove: remove,
+    addProgress: addProgress, removeProgress: removeProgress, setShare: setShare, timeline: timeline, blobOf: blobOf,
+    norm: norm
   };
 })();

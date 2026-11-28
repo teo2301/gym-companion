@@ -9,6 +9,7 @@
 var RANGES = [['1m', '1M', 31], ['3m', '3M', 92], ['6m', '6M', 183], ['1y', '1Y', 366], ['all', 'All', 0]];
 var range = lsGet('gymProgRange') || '3m', metric = lsGet('gymProgMetric') || 'volume';
 var D = null, tables = {};
+var FRIEND = null;      // {name, mine, back()} while showing a friend's shared Progress (read-only)
 
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -103,7 +104,8 @@ function styles() {
 function ensureScreen() {
   if (q('prog')) return;
   var sec = document.createElement('section'); sec.className = 'screen'; sec.id = 'prog';
-  sec.innerHTML = '<div class="wrap"><div class="pghead"><button class="pgback" id="pgBack" aria-label="Back">‹</button><h1>Progress</h1></div>' +
+  sec.innerHTML = '<div class="wrap"><div class="pghead"><button class="pgback" id="pgBack" aria-label="Back">‹</button><h1 id="pgTitle">Progress</h1></div>' +
+    '<p class="pgsub" id="pgFriend" style="display:none"></p>' +
     '<div class="pgrange" id="pgRange" role="tablist" aria-label="Period"></div><div id="pgBody"><div class="skel" style="height:120px"></div></div></div>';
   var home = q('home'); home.parentNode.insertBefore(sec, home.nextSibling);
   q('pgBack').onclick = function () { buzz(); leave(); };
@@ -116,9 +118,29 @@ function ensureScreen() {
   };
 }
 /* back to home, then let the page put you wherever the live state says (e.g. a running workout) */
-function leave() { window.show('home'); if (typeof window.render === 'function') window.render(); }
+function leave() {
+  var back = FRIEND && FRIEND.back;
+  if (FRIEND) { FRIEND = null; D = null; }
+  window.show('home'); if (typeof window.render === 'function') window.render();
+  if (back) setTimeout(back, 250);
+}
+function setHead() {
+  q('pgTitle').textContent = FRIEND ? (FRIEND.mine ? 'My shared Progress' : FRIEND.name + '’s Progress') : 'Progress';
+  q('pgFriend').style.display = FRIEND ? '' : 'none';
+  q('pgFriend').textContent = FRIEND ? 'Read-only · shared ' + (FRIEND.mine ? 'by you with your friends' : 'by ' + FRIEND.name) + ' · bodyweight and photos aren’t part of it' : '';
+}
+/* A friend's Progress: the same cards, drawn from their shared snapshot, nothing editable or tappable into detail. */
+function openFriend(o) {
+  styles(); ensureScreen();
+  FRIEND = {name: String(o.name || 'Friend'), mine: !!o.mine, back: o.back, week: o.week || null};
+  var d = o.data || {}, st = d.stats || {};
+  D = {stats: {workouts: st.workouts || [], exercises: st.exercises || [], prs: st.prs || [], bodyweight: []}, prog: d.prog || null};
+  setHead(); window.show('prog'); q('pgBody').style.opacity = 1; render();
+}
 function open() {
   styles(); ensureScreen();
+  if (FRIEND) { FRIEND = null; D = null; }
+  setHead();
   window.show('prog');
   q('pgBody').style.opacity = D ? 0.5 : 1;          // refetch keeps the frame
   Promise.all([Store.stats(), Store.progress()]).then(function (v) {
@@ -211,16 +233,16 @@ function render() {
     '</div><div id="pg_best"></div></div>';
   html += card('cal', 'Consistency', 'Each square is a day; brighter = more sets.');
   html += card('lvl', 'Lifter level', 'Your overall strength level (1–50), week by week.');
-  html += card('evo', 'Your evolution', 'Before / after photos — stored only on this device.');
+  if (!FRIEND) html += card('evo', 'Your evolution', 'Before / after photos — stored only on this device.');
   html += card('mus', 'Muscles trained', 'Average sets per week. Most people grow best with about 10–20 per muscle.');
   html += card('grp', 'Muscle-group trends', 'Sets per week for each group, all on the same scale.');
   html += card('split', 'Training split', 'Share of your sets by muscle group in this period.');
-  html += card('str', 'Strength by muscle', 'Your best lift for each muscle against bodyweight standards. Tap one for its chart.');
-  html += card('bw', 'Bodyweight', null, '');
+  html += card('str', 'Strength by muscle', FRIEND ? 'Best lift for each muscle against bodyweight standards.' : 'Your best lift for each muscle against bodyweight standards. Tap one for its chart.');
+  if (!FRIEND) html += card('bw', 'Bodyweight', null, '');
   html += '<div class="pgcard"><div class="pgch"><h3>Personal records</h3><span class="pgsub" style="margin:0">' + P.length + ' in this period</span></div><div id="pg_prs"></div></div>';
-  html += '<div class="pgcard"><div class="pgch"><h3>Exercises</h3></div><input class="search" id="pgSearch" placeholder="Search your exercises…" autocomplete="off" style="margin:6px 0 4px"><div id="pg_ex"></div></div>';
+  html += '<div class="pgcard"><div class="pgch"><h3>Exercises</h3></div><input class="search" id="pgSearch" placeholder="' + (FRIEND ? 'Search exercises…' : 'Search your exercises…') + '" autocomplete="off" style="margin:6px 0 4px"><div id="pg_ex"></div></div>';
   q('pgBody').innerHTML = html;
-  drawEvolution();
+  if (!FRIEND) drawEvolution();
 
   /* training per week */
   var buckets = bucketize(W, cut);
@@ -297,7 +319,8 @@ function render() {
   if (isTable('cal')) tables.cal(q('pg_cal'));
   else Charts.calendar(q('pg_cal'), {days: days, weeks: calWeeks, fmt: function (v) { return v + ' sets'; }});
   var trained = Object.keys(days).filter(function (d) { return d >= cut; }).length;
-  q('pgn_cal').innerHTML = '<b>' + trained + '</b> training days in this period' + (D.prog && plan && plan.week ? ' · streak <b>' + plan.week.streak_weeks + '</b> ' + (plan.week.streak_weeks === 1 ? 'week' : 'weeks') : '') + '.';
+  var wkS = FRIEND ? FRIEND.week : (window.plan && plan.week);
+  q('pgn_cal').innerHTML = '<b>' + trained + '</b> training days in this period' + (D.prog && wkS ? ' · streak <b>' + wkS.streak_weeks + '</b> ' + (wkS.streak_weeks === 1 ? 'week' : 'weeks') : '') + '.';
 
   /* level */
   tables.lvl = function (box) { Charts.table(box, ['Week of', 'Level', 'Score'], LW.slice().reverse().map(function (w) { return [w.week, 'LV ' + w.lv, w.score]; })); };
@@ -374,7 +397,7 @@ function render() {
     var x = mus[m];
     return {label: names[m] || m, value: Math.max(0, x.score), color: window.tierColour ? tierColour(x) : null,
       text: x.level + (x.e1rm ? ' · ' + kg(x.e1rm) + ' kg' : ''), lift: x.lift, raw: x,
-      onclick: function () { exerciseSheet(x.lift); }};
+      onclick: FRIEND ? null : function () { exerciseSheet(x.lift); }};
   }).sort(function (a, b) { return b.value - a.value; });
   tables.str = function (box) { Charts.table(box, ['Muscle', 'Level', 'Best lift', 'Est. 1RM (kg)'], sItems.map(function (i) { return [i.label, i.raw.level, i.lift, kg(i.raw.e1rm)]; })); };
   if (isTable('str')) tables.str(q('pg_str'));
@@ -382,6 +405,8 @@ function render() {
   q('pgn_str').innerHTML = pr && pr.strongest ? 'Strongest: <b>' + e(names[pr.strongest] || pr.strongest) + '</b> · weakest: <b>' + e(names[pr.weakest] || pr.weakest) + '</b>.' : '';
 
   /* bodyweight */
+  if (!FRIEND) drawBw();
+  function drawBw() {
   var BW = (st.bodyweight || []).filter(function (b) { return b.date >= cut; });
   tables.bw = function (box) { Charts.table(box, ['Date', 'kg'], BW.slice().reverse().map(function (b) { return [b.date, kg(b.kg)]; })); };
   if (isTable('bw')) tables.bw(q('pg_bw'));
@@ -396,6 +421,7 @@ function render() {
   if (q('pgBwGo')) q('pgBwGo').onclick = function () {
     Store.logBodyweight(q('pgBwIn').value).then(function () { buzz([10, 40, 10]); toastOk('Weight logged'); open(); }).catch(function (err) { toast(err.message); });
   };
+  }
 
   /* personal records */
   var prList = P.slice().reverse(), shown = 8;
@@ -453,7 +479,7 @@ function qualTrend(L, k) {
 var tableOn = {};
 function isTable(id) { return !!tableOn[id]; }
 function tile(k, v, sub, cmp) { return '<div><small>' + k + '</small><b class="num">' + v + '</b><em>' + sub + '</em>' + (cmp || '') + '</div>'; }
-function rowClick(ev) { var r = ev.target.closest && ev.target.closest('[data-ex]'); if (r) { buzz(); exerciseSheet(r.getAttribute('data-ex')); } }
+function rowClick(ev) { if (FRIEND) return; var r = ev.target.closest && ev.target.closest('[data-ex]'); if (r) { buzz(); exerciseSheet(r.getAttribute('data-ex')); } }
 
 /* weekly buckets across the period (monthly when the period is long), zero-filled */
 /* Muscle-group trends: weeks[].groups = sets per group from the engine (gym_progress / gymcore,
@@ -654,14 +680,17 @@ function exerciseSheet(name) {
 /* Android Back (the app asks window.GymBack first): close what's on top, Progress -> Home */
 window.GymBack = function () {
   var on = function (id) { var x = q(id); return !!(x && x.classList.contains('on')); };
+  if (q('lbox')) { q('lbox').remove(); return true; }
   if (on('sheet') && window.closeSheet) { closeSheet(); return true; }
   if (on('lvup')) { q('lvup').classList.remove('on'); return true; }
   if (on('prog')) { leave(); return true; }
+  if (on('me') && window.GymProfile) { GymProfile.close(); return true; }
   if (on('done') && q('homeBtn')) { q('homeBtn').click(); return true; }
   return false;
 };
 
 styles();          // the home-screen button uses these styles too
-window.Progress = {open: open, exercise: exerciseSheet, _projection: projection, _standards: standardsFor, _split: splitShares,
+window.Progress = {open: open, openFriend: openFriend, styles: styles, friend: function () { return FRIEND; },
+  invalidate: function () { var p = q('prog'); if (!(p && p.classList.contains('on'))) D = null; }, exercise: exerciseSheet, _projection: projection, _standards: standardsFor, _split: splitShares,
   refreshEvolution: function () { if (D) drawEvolution(); }};
 })();

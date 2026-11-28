@@ -95,8 +95,36 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     sb, hb, vw = page.locator("#settingsBtn").bounding_box(), page.locator("#hello").bounding_box(), page.viewport_size["width"]
     if not sb or sb["x"] < 0 or sb["x"] + sb["width"] > vw or sb["height"] < 40:
         problems.append(f"settings button off-screen or too small: {sb}")
-    elif hb and hb["x"] + hb["width"] > sb["x"]:
+    elif hb and hb["x"] + hb["width"] > sb["x"] and hb["y"] < sb["y"] + sb["height"] and sb["y"] < hb["y"] + hb["height"]:
         problems.append("settings button overlaps the greeting")
+    # ---- Header (1.19): logo + "Gym Companion", live date/time, "Hi <name>" (asked once), no time-of-day greeting
+    brand = page.locator("#brand")
+    if "Gym Companion" not in brand.inner_text() or not page.locator("#brand svg.logo").is_visible() \
+            or (page.locator("#brand svg.logo").bounding_box() or {}).get("width", 0) < 20:
+        problems.append("header should show the Gym Companion logo + name")
+    import re as _re
+    now_line = page.inner_text("#nowLine")
+    if not _re.fullmatch(r"[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2,3} · \d{2}:\d{2}", now_line):
+        problems.append(f"header date/time looks wrong: {now_line!r}")
+    head_txt = page.inner_text("#home .wrap > h1") + page.inner_text("#brand")
+    if _re.search(r"morning|afternoon|evening", head_txt, _re.I):
+        problems.append(f"header still has a time-of-day greeting: {head_txt!r}")
+    if page.inner_text("#hello").strip() != "Hi" or not page.locator("#npIn").is_visible():
+        problems.append("without a name the header says plain 'Hi' and asks once for a name")
+    page.fill("#npIn", "Sam"); page.click("#npOk"); page.wait_for_timeout(400)
+    if page.inner_text("#hello").strip() != "Hi Sam" or page.locator("#npIn").count():
+        problems.append(f"setting a name should show 'Hi Sam': {page.inner_text('#hello')!r}")
+    if page.evaluate("Store.backupData().then(function (b) { return b.settings.userName; })") != "Sam":
+        problems.append("the name must be stored on the device (in backups)")
+    page.screenshot(path=SHOTS / f"{tag}-2b-header.png")
+    small = dict(page.viewport_size); page.set_viewport_size({"width": 320, "height": small["height"]}); page.wait_for_timeout(300)
+    bb, sb2 = page.locator("#brand").bounding_box(), page.locator("#settingsBtn").bounding_box()
+    clipped = page.evaluate("['nowLine','hello','brand'].some(function (i) { var e = document.getElementById(i); return e.scrollWidth > e.clientWidth + 1; })")
+    if not bb or not sb2 or bb["x"] + bb["width"] > sb2["x"] + 1 or sb2["x"] + sb2["width"] > 320 or clipped:
+        problems.append(f"header clips/overlaps at 320px wide: brand {bb} settings {sb2} clipped {clipped}")
+    page.screenshot(path=SHOTS / f"{tag}-2b-header-320.png")
+    page.set_viewport_size(small); page.wait_for_timeout(200)
+
     # Edit routine from the routine list: add a preset by search, save, check it stuck
     page.locator(".redit").first.scroll_into_view_if_needed()
     rname = page.locator(".rrow .rcard b").first.inner_text()
@@ -459,6 +487,104 @@ def run(pw, engine: str, device: str, url: str) -> list[str]:
     if [r[0] for r in srows] != ["Push", "Pull", "Legs", "Core"] or sum(int(r[2]) for r in srows) != 100:
         problems.append(f"training split table wrong: {srows}")
     page.click('[data-tab="split"]')
+    page.evaluate("GymBack()"); page.wait_for_timeout(300)
+
+    # ---- Own profile (1.19): training calendar + back-dating a workout, progress photos timeline
+    if page.evaluate("cur") == "prog":
+        page.evaluate("GymBack()"); page.wait_for_timeout(300)
+    page.locator("#openMe").scroll_into_view_if_needed(); page.click("#openMe")
+    page.wait_for_selector("#meCal .gcd[data-d]", timeout=10000)
+    today = page.evaluate("todayStr()")
+    target = page.evaluate("(function(){var d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()-(d.getDay()+6)%7);return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)})()")  # Monday this week
+    def cal_state():
+        return page.evaluate("""Promise.all([Store.workouts(), Store.stats(), Store.plan()]).then(function (v) {
+          var cal = GymProfile.calList(v[0]);
+          return {n: v[0].filter(function (w) { return w.date_str === %r; }).length, streak: GymCal.streaks(cal), week: v[2].week.workouts,
+                  stats: v[1].workouts.filter(function (w) { return w.date === %r; }).length, total: v[0].length}; })""" % (target, target))
+    def goto_month(ds):
+        for _ in range(3):
+            if page.locator(f'#meCal .gcd[data-d="{ds}"]').count():
+                return
+            page.click('#meCal [data-nav="-1"]'); page.wait_for_timeout(200)
+    before = cal_state()
+    if page.locator(f'#meCal .gcd[data-d="{today}"].today').count() != 1:
+        problems.append("calendar should mark today")
+    if before["n"] != 0:
+        problems.append(f"calendar target day {target} should start empty: {before}")
+    page.screenshot(path=SHOTS / f"{tag}-13-calendar.png")
+    # future days: no add button; the store refuses future dates too
+    fut = page.locator("#meCal .gcd.fut")
+    if fut.count():
+        fut.first.click(); page.wait_for_timeout(200)
+        if page.locator("#meCal .gcadd").count() or "once the day has come" not in page.inner_text("#meCal .gcday"):
+            problems.append("future calendar days must not offer 'Add workout'")
+    tomorrow = page.evaluate("(function(){var d=new Date(Date.now()+864e5);return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)})()")
+    if page.evaluate("Store.addWorkout({date: %r, exercises: [{name: 'Squat (Barbell)', sets: [{w: 100, r: 5}]}]}).then(function (j) { return j.ok; })" % tomorrow):
+        problems.append("the store accepted a workout on a future date")
+    goto_month(target)
+    page.click(f'#meCal .gcd[data-d="{target}"]'); page.wait_for_timeout(200)
+    page.wait_for_selector(f'#meCal .gcadd[data-add="{target}"]', timeout=3000)
+    page.click(f'#meCal .gcadd[data-add="{target}"]')
+    page.wait_for_selector("#weTitle", state="visible", timeout=5000)
+    page.fill("#weTitle", "Back-dated Legs"); page.fill("#weMin", "45"); page.fill("#weNote", "logged later")
+    page.fill("#wSearch", "squat"); page.locator("#wPick .it").first.click(); page.wait_for_timeout(200)
+    page.locator('#wBody input[data-k="w"]').first.fill("100"); page.locator('#wBody input[data-k="r"]').first.fill("5")
+    page.screenshot(path=SHOTS / f"{tag}-14-backdate-editor.png")
+    page.click("#wSave")
+    page.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=8000)
+    page.wait_for_timeout(1200)
+    after = cal_state()
+    cell = page.locator(f'#meCal .gcd[data-d="{target}"]')
+    if after["n"] != 1 or after["stats"] != 1 or after["total"] != before["total"] + 1:
+        problems.append(f"back-dated workout not saved/counted: {before} -> {after}")
+    if not cell.count() or cell.get_attribute("data-n") != "1" or "l1" not in (cell.get_attribute("class") or ""):
+        problems.append("the back-dated day should light up on the calendar")
+    if after["week"] != before["week"] + 1 or after["streak"]["current"] < before["streak"]["current"] + (1 if before["week"] == 0 else 0):
+        problems.append(f"weekly count / streak didn't change: {before} -> {after}")
+    w = page.evaluate("Store.workouts().then(function (l) { var w = l.filter(function (x) { return x.title === 'Back-dated Legs'; })[0];"
+                      " return w && Store.workout(w.id); })")
+    if not w or w["date_str"] != target or w["duration_min"] != 45 or w.get("note") != "logged later":
+        problems.append(f"back-dated workout fields wrong: {w and {k: w[k] for k in ('date_str', 'duration_min', 'note')}}")
+    page.screenshot(path=SHOTS / f"{tag}-15-calendar-lit.png")
+    # Table alternative
+    page.click("#meCal [data-caltab]"); page.wait_for_selector("#meCal table", timeout=3000)
+    if "Back-dated Legs" not in page.inner_text("#meCal"):
+        problems.append("calendar table view should list the workout")
+    page.click("#meCal [data-caltab]"); page.wait_for_selector("#meCal .gcgrid", timeout=3000)
+    # edit + delete that day's workout from the calendar
+    goto_month(target)
+    page.click(f'#meCal .gcd[data-d="{target}"]'); page.wait_for_timeout(200)
+    page.click("#meCal .gcday button.gcw"); page.wait_for_selector("#wDel", timeout=5000)
+    page.once("dialog", lambda d: d.accept())
+    page.click("#wDel")
+    page.wait_for_function("!document.getElementById('sheet').classList.contains('on')", timeout=8000)
+    page.wait_for_timeout(1000)
+    gone = cal_state()
+    if gone["n"] != 0 or gone["total"] != before["total"] or page.locator(f'#meCal .gcd[data-d="{target}"]').get_attribute("data-n") != "0":
+        problems.append(f"deleting the back-dated workout didn't clear the day: {gone}")
+    # progress photos: private by default, timeline order toggle, tap to enlarge, in the backup with the flag
+    page.set_input_files("#mePhIn", str(BODY_JPG))
+    page.wait_for_selector('#mePh .tlrow[data-kind="progress"]', timeout=8000)
+    if "only on this phone" not in page.inner_text('#mePh .tlrow[data-kind="progress"]'):
+        problems.append("a new progress photo must be private (on this phone only)")
+    page.click('#mePh [data-order="old"]'); page.wait_for_timeout(200)
+    days = page.evaluate("Array.from(document.querySelectorAll('#mePh [data-tlday]')).map(function (d) { return d.getAttribute('data-tlday'); })")
+    if days != sorted(days):
+        problems.append(f"oldest-first order wrong: {days}")
+    page.click('#mePh [data-order="new"]'); page.wait_for_timeout(200)
+    page.locator("#mePh .tlimg").first.click(); page.wait_for_selector("#lbox img", timeout=3000)
+    page.screenshot(path=SHOTS / f"{tag}-16-photo-big.png")
+    page.evaluate("GymBack()"); page.wait_for_timeout(200)
+    if page.locator("#lbox").count():
+        problems.append("Back should close the enlarged photo")
+    ch = page.evaluate("Store.backupData().then(function () { return GymPhoto.data(); })")
+    if len(ch.get("progress", [])) != 1 or ch["progress"][0].get("pub") is not False:
+        problems.append("progress photo (with its private flag) should be in the photo store / backup")
+    old = page.evaluate("GymPhoto.norm({mode: 'photo', photos: [{id: 'a', img: 'data:image/jpeg;base64,AAAA', date: '2026-01-01', lv: 3}]})")
+    if old["progress"] != [] or old["photos"][0]["pub"] is not False:
+        problems.append(f"old backups (no flags / no progress photos) must restore as private: {old}")
+    page.locator("#mePh").evaluate("n => n.closest('.pgcard').scrollIntoView({block:'start'})"); page.wait_for_timeout(200)
+    page.screenshot(path=SHOTS / f"{tag}-17-photos.png")
     page.evaluate("GymBack()"); page.wait_for_timeout(300)
 
     print(f"{engine:9} {device:18} LV {lv} -> offline LV {lv_off}, workouts {len(sessions)}, "
