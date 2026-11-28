@@ -6,6 +6,7 @@ import io
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -90,7 +91,7 @@ def main():
         check(s == 200 and a["me"]["name"] == "Alice" and len(a["token"]) > 30, "register A, name cleaned")
         A, a_me = a["token"], a["me"]
         _, b, _ = call(base, "POST", "/api/register", {"name": "Luca"}, ip="10.0.0.2"); B, b_me = b["token"], b["me"]
-        _, c, _ = call(base, "POST", "/api/register", {"name": "Stranger"}, ip="10.0.0.3"); C = c["token"]
+        _, c, _ = call(base, "POST", "/api/register", {"name": "Stranger"}, ip="10.0.0.3"); C = c["token"]; c_id = c["me"]["id"]
         check(call(base, "GET", "/api/me")[0] == 401, "no token -> 401")
         check(call(base, "GET", "/api/me", token="nope")[0] == 401, "bad token -> 401")
         check(call(base, "GET", "/gs/api/me", token=A)[1]["me"]["id"] == a_me["id"], "/gs prefix accepted")
@@ -225,6 +226,35 @@ def main():
         check(call(base, "GET", "/api/me", token=C)[0] == 401, "the old login stops working after recovery")
         C = r["token"]
         check(call(base, "POST", "/api/recover", {"key": "AAAAA-AAAAA-AAAAA-AAAAA"})[0] == 404 and call(base, "POST", "/api/recover", {"key": ""})[0] == 404, "wrong recovery key refused")
+        # --- admin.py (owner-only, run on the server): list + reissue a login
+        adm = lambda *a: subprocess.run([sys.executable, str(HERE / "admin.py")] + list(a), env=env, capture_output=True, text=True, timeout=30)
+        out = adm("list")
+        hashes = [r[0] for r in sqlite3.connect(str(data / "social.db")).execute("SELECT token_hash FROM users")]
+        check(out.returncode == 0 and "Alice" in out.stdout and a_me["id"] in out.stdout and not any(h in out.stdout for h in hashes),
+              "admin list: users with id/name, no token hashes")
+        alice_line = [l for l in out.stdout.splitlines() if a_me["id"] in l][0]
+        check(alice_line.split()[-1] == "1", "admin list: friend count counts each friendship once")
+        posts_before = len(call(base, "GET", "/api/feed", token=B)[1]["posts"])
+        out = adm("reissue", "alice")
+        link = [l for l in out.stdout.splitlines() if "#social-login=" in l]
+        newA = link[0].split("#social-login=")[1] if link else ""
+        check(out.returncode == 0 and link and link[0].startswith("https://teo2301.github.io/gym-companion/#social-login=") and len(newA) >= 40,
+              "admin reissue by name prints a login link in the app's format")
+        check(call(base, "GET", "/api/me", token=A)[0] == 401, "admin reissue: the old login dies")
+        check(call(base, "GET", "/api/me", token=newA)[1]["me"]["id"] == a_me["id"] and
+              [f["name"] for f in call(base, "GET", "/api/friends", token=newA)[1]["friends"]] == ["Luca"] and
+              len(call(base, "GET", "/api/feed", token=B)[1]["posts"]) == posts_before >= 1, "admin reissue keeps friends + posts")
+        A = newA
+        out = adm("reissue", c_id)
+        cnew = [l for l in out.stdout.splitlines() if "#social-login=" in l][0].split("#social-login=")[1]
+        check(out.returncode == 0 and call(base, "GET", "/api/me", token=cnew)[1]["me"]["id"] == c_id, "admin reissue by id")
+        s, r, _ = call(base, "POST", "/api/recover", {"key": key})
+        check(s == 200, "admin reissue leaves the recovery key working")
+        C = r["token"]
+        check(adm("reissue", "Nobody Here").returncode == 1 and "no user" in adm("reissue", "Nobody Here").stderr, "admin reissue: unknown user errors")
+        aud = sqlite3.connect(str(data / "social.db")).execute("SELECT action, user_id, user_name, by FROM admin_audit ORDER BY at").fetchall()
+        check([(x[0], x[1]) for x in aud] == [("reissue", a_me["id"]), ("reissue", c_id)] and all(x[3] for x in aud), "admin reissues are audited (who, when)")
+        check("token" not in " ".join(str(x) for x in aud).lower() and not any(len(str(v)) == 64 for x in aud for v in x), "audit log holds no secrets")
         old = b_me["code"]
         new = call(base, "POST", "/api/me/code", token=B)[1]["me"]["code"]
         check(new != old and call(base, "POST", "/api/friends", {"code": old}, token=C)[0] == 404, "reset code: old code dead")

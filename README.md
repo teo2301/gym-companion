@@ -40,8 +40,19 @@ Privacy policy: <https://teo2301.github.io/gym-companion/privacy.html>
 | `tools/build.sh` | Builds `docs/` + the Android assets from the shared source, runs a leak check, `--apk` also builds the signed release APK. |
 | `tools/e2e.py` | End-to-end test in WebKit (iPhone) and Chromium (Android) via Playwright, including offline. |
 | `tools/site/` | Extra site pages: privacy policy, download page (`download.html`). |
-| `server/` | Friends API (`social.py`, stdlib + Pillow, SQLite) + `test_social.py`; run with `docker compose up -d gym-social`. |
+| `server/` | Friends API (`social.py`, stdlib + Pillow, SQLite), owner `admin.py` + `test_social.py`; run with `docker compose up -d gym-social`. |
 | `tools/e2e_social.py` | Two-person friends test (iPhone + Android engines) against a throwaway server. |
+
+## Friends server admin (owner only)
+
+`server/admin.py` runs on the server only; it has no HTTP endpoint, so it can't be reached through `/gs`.
+`docker exec gym-social python /app/admin.py list` shows every user (id, name, created, last seen,
+friend count; no secrets). `docker exec gym-social python /app/admin.py reissue <name-or-id>` gives a
+user who lost their login a new one, the same way the recovery key does: friends, posts, profile, photos
+and their recovery key are kept, the old login stops working, and it prints a one-off
+`…/gym-companion/#social-login=<token>` link to send them privately (anyone holding it can sign in as
+them). Each reissue is recorded (who, when) in the `admin_audit` table; tokens and recovery keys are
+never printed or logged.
 
 ## Release checklist
 
